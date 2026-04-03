@@ -6,7 +6,7 @@ Uses **RAG (ChromaDB)** + **Llama 3 (llama.cpp)** + **FastAPI** + **React**.
 
 ---
 
-## 🚀 Quick Start (Local Demo)
+## Quick Start (Local Demo)
 
 ### Prerequisites
 - Python 3.10+
@@ -121,7 +121,7 @@ FastAPI Backend (port 8000)
 
 ---
 
-## 📋 Features Implemented (Milestone 1 = ~30% of total)
+## Features Implemented (Milestone 1 = ~30% of total)
 
 | Feature | Status |
 |---------|--------|
@@ -145,7 +145,7 @@ FastAPI Backend (port 8000)
 
 ---
 
-## 👥 Team
+## Team
 - **Arya Miryala** (Tech Lead) — Backend, RAG, AI integration, APIs
 - **Grace Wu** (Business Lead) — Market strategy, pricing, interviews
 - **Hui Xie** (Product Lead) — UI/UX, wireframes, frontend
