@@ -107,9 +107,9 @@ def seed_knowledge_base():
         metas = [d["meta"] for d in FILM_KNOWLEDGE]
         ids = [f"doc_{i}" for i in range(len(texts))]
         collection.add(documents=texts, metadatas=metas, ids=ids)
-        print(f"✅ Seeded {len(texts)} documents into ChromaDB")
+        print(f"Seeded {len(texts)} documents into ChromaDB")
     else:
-        print(f"✅ ChromaDB already has {collection.count()} documents")
+        print(f"ChromaDB already has {collection.count()} documents")
 
 
 def query_knowledge_base(query: str, n_results: int = 4) -> List[str]:
