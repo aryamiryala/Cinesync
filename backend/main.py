@@ -4,11 +4,7 @@ from pydantic import BaseModel
 from typing import Optional, List
 import chromadb
 from chromadb.utils import embedding_functions
-import requests
-import os
-
-OLLAMA_URL = "http://localhost:8001/v1/chat/completions"
-OLLAMA_MODEL = "llama3"
+from llm_client import call_llm, call_llm_with_history, call_llm_with_image
 
 app = FastAPI(title="Cinesync Backend")
 
@@ -185,28 +181,31 @@ CURRENT USER ROLE: {req.user_role}
 
 If an image is provided, visually assess it: identify setting type (urban/residential/industrial/natural), estimate crew access, flag any visible compliance concerns."""
 
-    # 3. Build messages for Ollama (image note: llama3 text-only, image is described in text)
-    messages = [{"role": "system", "content": system_prompt}]
-    for hist_msg in (req.conversation_history or []):
-        messages.append({"role": hist_msg.role, "content": hist_msg.content})
+    # 3. Build conversation history for the API call
+    history = [{"role": m.role, "content": m.content} for m in (req.conversation_history or [])]
 
-    user_content = req.message
-    if req.image_base64:
-        user_content = "[User uploaded a location photo] " + req.message
-
-    messages.append({"role": "user", "content": user_content})
-
-    # 4. Call llama.cpp server (OpenAI-compatible)
+    # 4. Call OpenAI — use vision route if image is attached, otherwise standard text
     try:
-        res = requests.post(OLLAMA_URL, json={
-            "model": OLLAMA_MODEL,
-            "messages": messages,
-            "stream": False,
-        }, timeout=120)
-        res.raise_for_status()
-        reply = res.json()["choices"][0]["message"]["content"]
+        if req.image_base64:
+            reply = call_llm_with_image(
+                system_prompt=system_prompt,
+                user_message=req.message,
+                messages=history,
+                image_base64=req.image_base64,
+                mime_type=req.image_media_type or "image/jpeg"
+            )
+        elif history:
+            reply = call_llm_with_history(
+                system_prompt=system_prompt,
+                messages=[*history, {"role": "user", "content": req.message}]
+            )
+        else:
+            reply = call_llm(
+                system_prompt=system_prompt,
+                user_message=req.message
+            )
+
         return ChatResponse(response=reply, rag_sources_used=len(context_docs))
-    except requests.exceptions.ConnectionError:
-        raise HTTPException(status_code=500, detail="Cannot connect to llama.cpp server. Make sure it's running on port 8001.")
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
