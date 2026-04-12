@@ -50,7 +50,7 @@ function RoleBadge({ role, size = 'sm' }) {
 
 function Avatar({ role, size = 36, name }) {
   const r = ROLES.find(x => x.id === role) || ROLES[0]
-  const initials = name ? name.split(' ').map(w => w[0]).join('').slice(0,2) : r.abbr
+  const initials = name ? name.split(' ').map(w => w[0]).join('').slice(0, 2) : r.abbr
   return (
     <div style={{
       width: size, height: size, borderRadius: 6,
@@ -85,7 +85,6 @@ function Message({ msg }) {
     }}>
       <Avatar role={isAI ? 'ai' : role} size={36} name={isAI ? 'AI' : msg.sender} />
       <div style={{ flex: 1, minWidth: 0 }}>
-        {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
           <span style={{
             fontFamily: 'var(--font-display)',
@@ -120,7 +119,6 @@ function Message({ msg }) {
           </span>
         </div>
 
-        {/* Image attachment */}
         {msg.imageUrl && (
           <div style={{ marginBottom: 10 }}>
             <img
@@ -143,7 +141,6 @@ function Message({ msg }) {
           </div>
         )}
 
-        {/* Content */}
         {isAI ? (
           <div className="ai-content" style={{ color: 'var(--text-secondary)' }}>
             <ReactMarkdown>{msg.content}</ReactMarkdown>
@@ -154,7 +151,6 @@ function Message({ msg }) {
           </p>
         )}
 
-        {/* RAG indicator */}
         {isAI && msg.ragSources > 0 && (
           <div style={{
             marginTop: 10,
@@ -180,7 +176,7 @@ function TypingIndicator() {
     }}>
       <Avatar role="ai" size={36} name="AI" />
       <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingTop: 8 }}>
-        {[0,1,2].map(i => (
+        {[0, 1, 2].map(i => (
           <div key={i} style={{
             width: 6, height: 6, borderRadius: '50%',
             background: 'var(--teal)',
@@ -194,6 +190,219 @@ function TypingIndicator() {
         </span>
       </div>
       <style>{`@keyframes pulse { 0%,100%{transform:scale(1);opacity:0.4} 50%{transform:scale(1.3);opacity:1} }`}</style>
+    </div>
+  )
+}
+
+// ─── TMZ Lookup Panel ─────────────────────────────────────────────────────────
+function TmzLookupPanel({ onClose }) {
+  const [address, setAddress] = useState('')
+  const [crewSize, setCrewSize] = useState('50')
+  const [loading, setLoading] = useState(false)
+  const [result, setResult] = useState(null)
+  const [error, setError] = useState(null)
+
+  const handleLookup = async () => {
+    if (!address.trim()) return
+    setLoading(true)
+    setResult(null)
+    setError(null)
+    try {
+      const res = await fetch('/api/tmz-lookup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address: address.trim(), crew_size: parseInt(crewSize) || 50 }),
+      })
+      if (!res.ok) {
+        const err = await res.json()
+        throw new Error(err.detail || 'Lookup failed')
+      }
+      setResult(await res.json())
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const inside = result?.inside_tmz
+  const statusColor = inside ? '#4ADE80' : '#E8416A'
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 100,
+      background: 'rgba(0,0,0,0.6)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+    }}
+      onClick={e => { if (e.target === e.currentTarget) onClose() }}
+    >
+      <div style={{
+        width: 480, maxWidth: '95vw',
+        background: 'var(--bg-surface)',
+        border: '1px solid var(--border-bright)',
+        borderRadius: 12,
+        overflow: 'hidden',
+        boxShadow: '0 24px 80px rgba(0,0,0,0.6)',
+      }}>
+        {/* Header */}
+        <div style={{
+          padding: '16px 20px',
+          borderBottom: '1px solid var(--border)',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          background: 'var(--bg-elevated)',
+        }}>
+          <div>
+            <div style={{
+              fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 700,
+              color: 'var(--amber)', letterSpacing: '0.06em',
+            }}>
+              📍 TMZ ZONE LOOKUP
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 2 }}>
+              Thirty Mile Zone — Beverly Blvd &amp; La Cienega Blvd center
+            </div>
+          </div>
+          <button onClick={onClose} style={{
+            background: 'none', border: 'none', color: 'var(--text-muted)',
+            cursor: 'pointer', fontSize: 20, lineHeight: 1,
+          }}>×</button>
+        </div>
+
+        {/* Input */}
+        <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ marginBottom: 10 }}>
+            <label style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', display: 'block', marginBottom: 6 }}>
+              LOCATION ADDRESS
+            </label>
+            <input
+              value={address}
+              onChange={e => setAddress(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleLookup()}
+              placeholder="e.g. Griffith Observatory, Los Angeles"
+              style={{
+                width: '100%', padding: '9px 12px',
+                background: 'var(--bg-input)',
+                border: '1px solid var(--border-bright)',
+                borderRadius: 7, color: 'var(--text-primary)',
+                fontSize: 13, fontFamily: 'var(--font-body)',
+                outline: 'none', boxSizing: 'border-box',
+              }}
+            />
+          </div>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
+            <div style={{ flex: 1 }}>
+              <label style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', display: 'block', marginBottom: 6 }}>
+                CREW SIZE (for budget estimate)
+              </label>
+              <input
+                type="number"
+                value={crewSize}
+                onChange={e => setCrewSize(e.target.value)}
+                min="1"
+                style={{
+                  width: '100%', padding: '9px 12px',
+                  background: 'var(--bg-input)',
+                  border: '1px solid var(--border-bright)',
+                  borderRadius: 7, color: 'var(--text-primary)',
+                  fontSize: 13, fontFamily: 'var(--font-body)',
+                  outline: 'none', boxSizing: 'border-box',
+                }}
+              />
+            </div>
+            <button
+              onClick={handleLookup}
+              disabled={loading || !address.trim()}
+              style={{
+                padding: '9px 20px',
+                background: loading || !address.trim() ? 'var(--bg-elevated)' : 'var(--amber)',
+                color: loading || !address.trim() ? 'var(--text-muted)' : '#0A0C10',
+                border: 'none', borderRadius: 7,
+                fontSize: 13, fontWeight: 700,
+                fontFamily: 'var(--font-display)', letterSpacing: '0.06em',
+                cursor: loading || !address.trim() ? 'default' : 'pointer',
+                transition: 'all 0.15s', flexShrink: 0,
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {loading ? 'CHECKING...' : 'CHECK TMZ'}
+            </button>
+          </div>
+        </div>
+
+        {/* Error */}
+        {error && (
+          <div style={{ padding: '14px 20px', background: 'rgba(232,65,106,0.08)', borderBottom: '1px solid var(--border)' }}>
+            <span style={{ fontSize: 13, color: 'var(--red)', fontFamily: 'var(--font-mono)' }}>⚠ {error}</span>
+          </div>
+        )}
+
+        {/* Result */}
+        {result && (
+          <div style={{ padding: '16px 20px' }}>
+            {/* Status badge */}
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 14,
+              padding: '14px 16px', borderRadius: 8,
+              background: inside ? 'rgba(74,222,128,0.08)' : 'rgba(232,65,106,0.08)',
+              border: `1px solid ${statusColor}33`,
+              marginBottom: 14,
+            }}>
+              <div style={{
+                width: 44, height: 44, borderRadius: 8,
+                background: statusColor + '20',
+                border: `2px solid ${statusColor}55`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 20, flexShrink: 0,
+              }}>
+                {inside ? '✅' : '⚠️'}
+              </div>
+              <div>
+                <div style={{
+                  fontFamily: 'var(--font-display)', fontSize: 18, fontWeight: 700,
+                  color: statusColor, letterSpacing: '0.05em',
+                }}>
+                  {result.status_label}
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 2 }}>
+                  {result.distance_miles} mi from TMZ center · {result.miles_from_boundary} mi {inside ? 'inside' : 'outside'} boundary
+                </div>
+              </div>
+            </div>
+
+            {/* Location details */}
+            <div style={{
+              padding: '10px 14px', borderRadius: 6,
+              background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+              marginBottom: 10,
+            }}>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', marginBottom: 4 }}>RESOLVED ADDRESS</div>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.4 }}>{result.resolved_address}</div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 4 }}>
+                {result.latitude}, {result.longitude}
+              </div>
+            </div>
+
+            {/* Budget impact */}
+            <div style={{
+              padding: '10px 14px', borderRadius: 6,
+              background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+              marginBottom: 10,
+            }}>
+              <div style={{ fontSize: 10, color: 'var(--amber)', fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', marginBottom: 4 }}>💰 BUDGET IMPACT</div>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6 }}>{result.budget_impact}</div>
+            </div>
+
+            {/* Union implications */}
+            <div style={{
+              padding: '10px 14px', borderRadius: 6,
+              background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+            }}>
+              <div style={{ fontSize: 10, color: 'var(--teal)', fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', marginBottom: 4 }}>⚖️ UNION IMPLICATIONS</div>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.6 }}>{result.union_implications}</div>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
@@ -247,16 +456,16 @@ export default function App() {
   const [messages, setMessages] = useState(INITIAL_MESSAGES)
   const [input, setInput] = useState('')
   const [selectedRole, setSelectedRole] = useState('Location Manager')
-  const [pendingImage, setPendingImage] = useState(null) // { base64, url, type }
+  const [pendingImage, setPendingImage] = useState(null)
   const [isLoading, setIsLoading] = useState(false)
-  const [backendStatus, setBackendStatus] = useState('checking') // 'ok' | 'error' | 'checking'
+  const [backendStatus, setBackendStatus] = useState('checking')
   const [history, setHistory] = useState([])
+  const [showTmzLookup, setShowTmzLookup] = useState(false)
 
   const fileInputRef = useRef(null)
   const chatEndRef = useRef(null)
   const inputRef = useRef(null)
 
-  // Check backend health
   useEffect(() => {
     fetch('/health')
       .then(r => r.json())
@@ -264,7 +473,6 @@ export default function App() {
       .catch(() => setBackendStatus('error'))
   }, [])
 
-  // Auto-scroll
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, isLoading])
@@ -307,7 +515,6 @@ export default function App() {
     setPendingImage(null)
     setIsLoading(true)
 
-    // Build conversation history for context
     const newHistory = [
       ...history,
       { role: 'user', content: text || 'Please analyze this location photo.' }
@@ -352,7 +559,7 @@ export default function App() {
         id: Date.now() + 1,
         sender: 'Cinesync',
         role: 'ai',
-        content: `⚠️ **Connection error.** Could not reach backend: ${err.message}\n\nMake sure the FastAPI server is running on port 8000 and your ANTHROPIC_API_KEY is set.`,
+        content: `⚠️ **Connection error.** Could not reach backend: ${err.message}\n\nMake sure the FastAPI server is running on port 8000 and your OPENAI_API_KEY is set.`,
         time: fmt(new Date()),
         ragSources: 0,
       }])
@@ -372,6 +579,8 @@ export default function App() {
 
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', fontFamily: 'var(--font-body)' }}>
+
+      {showTmzLookup && <TmzLookupPanel onClose={() => setShowTmzLookup(false)} />}
 
       {/* ── Left Sidebar ─────────────────────────────── */}
       <div style={{
@@ -420,6 +629,45 @@ export default function App() {
             <span style={{ color: 'var(--amber)', fontSize: 13 }}>🎬</span>
             <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>location-scout</span>
           </div>
+        </div>
+
+        {/* ── TMZ Lookup Tool ── */}
+        <div style={{ padding: '8px 16px 12px', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', letterSpacing: '0.1em', marginBottom: 8 }}>
+            TOOLS
+          </div>
+          <button
+            onClick={() => setShowTmzLookup(true)}
+            style={{
+              width: '100%',
+              padding: '9px 12px',
+              background: 'var(--bg-elevated)',
+              border: '1px solid var(--border-bright)',
+              borderRadius: 7,
+              display: 'flex', alignItems: 'center', gap: 8,
+              cursor: 'pointer',
+              transition: 'all 0.15s',
+              textAlign: 'left',
+            }}
+            onMouseEnter={e => {
+              e.currentTarget.style.borderColor = 'rgba(245,166,35,0.5)'
+              e.currentTarget.style.background = 'var(--amber-glow)'
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.borderColor = 'var(--border-bright)'
+              e.currentTarget.style.background = 'var(--bg-elevated)'
+            }}
+          >
+            <span style={{ fontSize: 15 }}>📍</span>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--amber)', fontFamily: 'var(--font-display)', letterSpacing: '0.04em' }}>
+                TMZ LOOKUP
+              </div>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                Check any address
+              </div>
+            </div>
+          </button>
         </div>
 
         {/* Participants */}
@@ -495,7 +743,7 @@ export default function App() {
               }}>LIVE</span>
             </div>
             <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2 }}>
-              Real-time AI-assisted location compliance & scouting
+              Real-time AI-assisted location compliance &amp; scouting
             </div>
           </div>
 
@@ -564,7 +812,6 @@ export default function App() {
           background: 'var(--bg-surface)',
           borderTop: '1px solid var(--border)',
         }}>
-          {/* Image preview */}
           {pendingImage && (
             <div style={{
               marginBottom: 10, display: 'flex', alignItems: 'center', gap: 10,
@@ -594,7 +841,6 @@ export default function App() {
               transition: 'border-color 0.2s',
             }}
           >
-            {/* File upload button */}
             <button
               onClick={() => fileInputRef.current?.click()}
               title="Upload location photo"
@@ -617,13 +863,12 @@ export default function App() {
               onChange={e => handleImageUpload(e.target.files[0])}
             />
 
-            {/* Text input */}
             <textarea
               ref={inputRef}
               value={input}
               onChange={e => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder={`Message as ${ROLES.find(r=>r.id===selectedRole)?.label}... (drop image or 📎 to upload)`}
+              placeholder={`Message as ${ROLES.find(r => r.id === selectedRole)?.label}... (drop image or 📎 to upload)`}
               rows={1}
               style={{
                 flex: 1, background: 'none', border: 'none', outline: 'none',
@@ -634,7 +879,6 @@ export default function App() {
               }}
             />
 
-            {/* Send button */}
             <button
               onClick={sendMessage}
               disabled={isLoading || (!input.trim() && !pendingImage)}

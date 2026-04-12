@@ -1,8 +1,8 @@
 # Cinesync — Film Location Intelligence
-### DSCI-560 Capstone 
+### DSCI-560 Capstone
 
 A domain-specific AI group chat system for film production location management.
-Uses **RAG (ChromaDB)** + **Llama 3 (llama.cpp)** + **FastAPI** + **React**.
+Uses **RAG (ChromaDB)** + **GPT-4o mini (OpenAI API)** + **FastAPI** + **React**.
 
 ---
 
@@ -11,47 +11,11 @@ Uses **RAG (ChromaDB)** + **Llama 3 (llama.cpp)** + **FastAPI** + **React**.
 ### Prerequisites
 - Python 3.10+
 - Node.js 18+
-- cmake (for building llama.cpp)
+- OpenAI API key (set in `backend/.env`)
 
 ---
 
-### 1. LLM Server Setup (llama.cpp)
-
-**Build llama.cpp:**
-```bash
-git clone https://github.com/ggerganov/llama.cpp
-cd llama.cpp
-cmake -B build
-cmake --build build --config Release
-```
-
-**Download the model (~4.7GB):**
-```bash
-mkdir -p llama.cpp/models
-cd llama.cpp/models
-curl -L -o llama3-8b.gguf "https://huggingface.co/bartowski/Meta-Llama-3.1-8B-Instruct-GGUF/resolve/main/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf"
-```
-
-**Start the server (CPU-only mode for stability on macOS 12):**
-```bash
-cd llama.cpp/build/bin
-DYLD_LIBRARY_PATH=$(pwd) ./llama-server \
-  -m /full/path/to/llama.cpp/models/llama3-8b.gguf \
-  --host 0.0.0.0 --port 8001 --ctx-size 2048 \
-  --no-warmup --n-gpu-layers 0
-```
-
-You should see:
-```
-main: model loaded
-main: server is listening on http://0.0.0.0:8001
-```
-
----
-
-### 2. Backend Setup
-
-Open a **new terminal**:
+### 1. Backend Setup
 
 ```bash
 cd backend
@@ -60,6 +24,15 @@ source venv/bin/activate          # Mac/Linux
 # venv\Scripts\activate           # Windows
 
 pip install -r requirements.txt
+```
+
+Create a `.env` file in the `backend/` folder:
+```
+OPENAI_API_KEY=sk-...
+```
+
+Start the backend:
+```bash
 uvicorn main:app --reload --port 8000
 ```
 
@@ -73,7 +46,7 @@ Verify at: http://localhost:8000/health
 
 ---
 
-### 3. Frontend Setup
+### 2. Frontend Setup
 
 Open a **new terminal**:
 
@@ -83,13 +56,13 @@ npm install
 npm run dev
 ```
 
-Open: **http://localhost:3000**
+Open: **http://localhost:5173**
 
 ---
 
 ## Demo Flow
 
-1. **Open** http://localhost:3000
+1. **Open** http://localhost:5173
 2. **Show** the existing conversation — CinesyncAI already answered TMZ status and magic hour questions
 3. **Switch role** to "Producer" using the dropdown (top right)
 4. **Ask:** *"What's the permit cost for 80 crew members on a city street for 3 days?"*
@@ -97,14 +70,16 @@ Open: **http://localhost:3000**
 6. **Upload** a location photo (📎 button) and send: *"Can we film here? Analyze for compliance."*
 7. **Show** the structured AI response with RAG sources
 8. **Switch role** to "Director" and ask about natural light
+9. **Click "📍 TMZ LOOKUP"** in the sidebar — check Griffith Observatory (inside) vs a Malibu address (outside) to show the budget contrast
 
 ---
 
-## Architecture 
+## Architecture
 
 ```
-User (React Frontend, port 3000)
+User (React Frontend, port 5173)
         │  HTTP POST /api/chat
+        │  HTTP POST /api/tmz-lookup
         ▼
 FastAPI Backend (port 8000)
         │
@@ -112,22 +87,22 @@ FastAPI Backend (port 8000)
         │               [FilmLA ordinances, TMZ rules,
         │                noise laws, union rules, logistics]
         │
-        └─ llama.cpp server (port 8001)
-                          - Model: Llama 3.1 8B Instruct (Q4_K_M)
-                          - OpenAI-compatible API
-                          - System: RAG context + role prompt
+        └─ OpenAI API (GPT-4o mini)
+                          - Text: RAG context + role-tailored system prompt
+                          - Vision: real image analysis on location photo uploads
                           - Returns: structured compliance report
 ```
 
 ---
 
-## Features Implemented (Milestone 1 = ~30% of total)
+## Features Implemented (Milestone 2 = ~40% of total)
 
 | Feature | Status |
 |---------|--------|
 | React group chat UI | ✅ Done |
 | Multi-role switching (Director, Producer, etc.) | ✅ Done |
 | Image upload + drag-and-drop | ✅ Done |
+| Real vision analysis on uploaded photos | ✅ Done |
 | FastAPI backend | ✅ Done |
 | ChromaDB knowledge base (15 docs) | ✅ Done |
 | RAG retrieval on every query | ✅ Done |
@@ -137,11 +112,27 @@ FastAPI Backend (port 8000)
 | FilmLA permit categories + costs | ✅ Done |
 | Noise ordinance data | ✅ Done |
 | Union rules (DGA, IATSE) | ✅ Done |
-| GPS-based TMZ lookup | 🔜 Week 4 |
+| GPS/address → TMZ lookup tool | ✅ Done |
+| Hybrid TMZ boundary (contractual + geometric) | ✅ Done |
+| Switched from local Llama to GPT-4o mini API | ✅ Done |
 | Real FilmLA API integration | 🔜 Week 5 |
 | Sun-path diagram generation | 🔜 Week 6 |
 | Mobile app (Android TWA) | 🔜 Week 5-6 |
 | User auth + persistent rooms | 🔜 Week 3-4 |
+
+---
+
+## LLM Migration Note (Milestone 2)
+
+The project originally used **Llama 3.1 8B (Q4_K_M)** running locally via llama.cpp.
+This was replaced with the **OpenAI GPT-4o mini API** for the following reasons:
+
+- Local model required ~5GB storage and ran CPU-only on macOS 12 (very slow)
+- GPT-4o mini responses come back in seconds vs. 30–60s locally
+- GPT-4o mini supports **real vision/image analysis** — uploaded location photos
+  are now genuinely analyzed rather than described as a text note
+- Cost at class-project scale is negligible (< $1 total estimated)
+- All RAG logic, ChromaDB embeddings, and FastAPI architecture remain unchanged
 
 ---
 

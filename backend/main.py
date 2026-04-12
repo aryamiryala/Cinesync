@@ -5,6 +5,10 @@ from typing import Optional, List
 import chromadb
 from chromadb.utils import embedding_functions
 from llm_client import call_llm, call_llm_with_history, call_llm_with_image
+import math
+import urllib.request
+import urllib.parse
+import json
 
 app = FastAPI(title="Cinesync Backend")
 
@@ -23,6 +27,82 @@ collection = chroma_client.get_or_create_collection(
     name="film_knowledge",
     embedding_function=embedding_fn
 )
+
+# ─── TMZ Constants ────────────────────────────────────────────────────────────
+# TMZ center: Beverly Blvd & La Cienega Blvd, Los Angeles
+TMZ_CENTER_LAT = 34.0803
+TMZ_CENTER_LON = -118.3603
+TMZ_RADIUS_MILES = 30.0
+
+# The TMZ boundary is a contractual definition, not a perfect geometric circle.
+# Some areas (e.g. Malibu) are geographically within 30 miles but are
+# contractually OUTSIDE TMZ. This lookup table overrides the math for known cases.
+KNOWN_OUTSIDE_TMZ = {
+    'malibu', 'long beach', 'anaheim', 'santa ana', 'irvine', 'orange',
+    'ventura', 'oxnard', 'thousand oaks', 'simi valley', 'moorpark',
+    'lancaster', 'palmdale', 'santa clarita', 'valencia',
+    'san bernardino', 'riverside', 'ontario', 'rancho cucamonga',
+    'fontana', 'moreno valley', 'corona', 'pomona',
+    'san diego', 'bakersfield', 'santa barbara', 'palm springs',
+    'victorville', 'hesperia', 'apple valley', 'big bear',
+    'lake arrowhead', 'catalina', 'avalon',
+}
+
+KNOWN_INSIDE_TMZ = {
+    'los angeles', 'santa monica', 'burbank', 'pasadena', 'culver city',
+    'hollywood', 'west hollywood', 'glendale', 'arcadia', 'torrance',
+    'el segundo', 'manhattan beach', 'hermosa beach', 'redondo beach',
+    'inglewood', 'hawthorne', 'gardena', 'compton', 'downey', 'whittier',
+    'van nuys', 'north hollywood', 'sherman oaks', 'encino', 'chatsworth',
+    'northridge', 'san fernando', 'studio city', 'silver lake', 'echo park',
+    'el monte', 'monrovia', 'azusa', 'covina', 'west covina',
+    'alhambra', 'san gabriel', 'temple city', 'rosemead', 'baldwin park',
+    'beverly hills', 'bel air', 'brentwood', 'pacific palisades',
+    'koreatown', 'downtown', 'arts district', 'boyle heights',
+}
+
+
+def haversine_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Calculate distance in miles between two GPS coordinates."""
+    R = 3958.8  # Earth radius in miles
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi/2)**2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda/2)**2
+    return R * 2 * math.asin(math.sqrt(a))
+
+
+def check_tmz_status(resolved_address: str, distance_miles: float) -> bool:
+    """
+    Hybrid TMZ check: city lookup table takes priority over geometry.
+    The TMZ is a contractual boundary, not a perfect 30-mile circle.
+    """
+    addr_lower = resolved_address.lower()
+
+    # Check known outside cities first
+    for city in KNOWN_OUTSIDE_TMZ:
+        if city in addr_lower:
+            return False  # outside TMZ
+
+    # Check known inside cities
+    for city in KNOWN_INSIDE_TMZ:
+        if city in addr_lower:
+            return True  # inside TMZ
+
+    # Fall back to geometry for unknown locations
+    return distance_miles <= TMZ_RADIUS_MILES
+
+
+def geocode_address(address: str):
+    """Convert address string to lat/lon using OpenStreetMap Nominatim (free, no API key)."""
+    params = urllib.parse.urlencode({'q': address, 'format': 'json', 'limit': 1})
+    url = f"https://nominatim.openstreetmap.org/search?{params}"
+    req = urllib.request.Request(url, headers={'User-Agent': 'Cinesync/1.0 (class project)'})
+    with urllib.request.urlopen(req, timeout=10) as response:
+        data = json.loads(response.read())
+        if data:
+            return float(data[0]['lat']), float(data[0]['lon']), data[0].get('display_name', address)
+    return None, None, None
 
 
 # ─── Knowledge Base Seeding ───────────────────────────────────────────────────
@@ -115,13 +195,13 @@ def query_knowledge_base(query: str, n_results: int = 4) -> List[str]:
 
 # ─── Models ───────────────────────────────────────────────────────────────────
 class Message(BaseModel):
-    role: str  # "user" or "assistant"
+    role: str
     content: str
 
 
 class ChatRequest(BaseModel):
     message: str
-    user_role: str = "Location Manager"  # Director, Producer, AD, Location Manager, Production Designer
+    user_role: str = "Location Manager"
     image_base64: Optional[str] = None
     image_media_type: Optional[str] = "image/jpeg"
     conversation_history: Optional[List[Message]] = []
@@ -130,6 +210,24 @@ class ChatRequest(BaseModel):
 class ChatResponse(BaseModel):
     response: str
     rag_sources_used: int
+
+
+class TmzLookupRequest(BaseModel):
+    address: str
+    crew_size: Optional[int] = 50  # for budget impact estimate
+
+
+class TmzLookupResponse(BaseModel):
+    address: str
+    resolved_address: str
+    latitude: float
+    longitude: float
+    distance_miles: float
+    inside_tmz: bool
+    status_label: str        # "INSIDE TMZ" or "OUTSIDE TMZ"
+    miles_from_boundary: float  # positive = inside, negative = outside
+    budget_impact: str
+    union_implications: str
 
 
 # ─── Routes ───────────────────────────────────────────────────────────────────
@@ -141,6 +239,63 @@ async def startup_event():
 @app.get("/health")
 def health_check():
     return {"status": "ok", "knowledge_docs": collection.count()}
+
+
+@app.post("/api/tmz-lookup", response_model=TmzLookupResponse)
+async def tmz_lookup(req: TmzLookupRequest):
+    """
+    Takes any address, geocodes it, and returns TMZ status + budget implications.
+    Uses OpenStreetMap Nominatim — free, no API key required.
+    """
+    try:
+        lat, lon, resolved = geocode_address(req.address)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Geocoding failed: {str(e)}")
+
+    if lat is None:
+        raise HTTPException(status_code=404, detail=f"Could not find location: {req.address}")
+
+    distance = haversine_miles(TMZ_CENTER_LAT, TMZ_CENTER_LON, lat, lon)
+    inside = check_tmz_status(resolved, distance)
+    miles_from_boundary = round(TMZ_RADIUS_MILES - distance, 2)  # positive=inside, negative=outside
+
+    crew = req.crew_size or 50
+
+    if inside:
+        budget_impact = "No travel allowances required. Crew works under standard local rates."
+        union_implications = (
+            f"No location premium triggered. No per diem required. "
+            f"Estimated crew cost savings vs. outside TMZ: "
+            f"${crew * 150:,}–${crew * 200:,}/week."
+        )
+    else:
+        daily_perdiem_low = crew * 125
+        daily_perdiem_high = crew * 200
+        weekly_low = daily_perdiem_low * 5
+        weekly_high = daily_perdiem_high * 5
+        budget_impact = (
+            f"OUTSIDE TMZ triggers full travel pay. "
+            f"Per diem: ${daily_perdiem_low:,}–${daily_perdiem_high:,}/day for {crew} crew. "
+            f"Weekly additional cost: ${weekly_low:,}–${weekly_high:,}. "
+            f"Hotel accommodations required on top of per diem."
+        )
+        union_implications = (
+            f"DGA/IATSE location premium: $50/crew member/day = ${crew * 50:,}/day. "
+            f"AD must notify Director of location status 48 hrs in advance."
+        )
+
+    return TmzLookupResponse(
+        address=req.address,
+        resolved_address=resolved,
+        latitude=round(lat, 6),
+        longitude=round(lon, 6),
+        distance_miles=round(distance, 2),
+        inside_tmz=inside,
+        status_label="INSIDE TMZ" if inside else "OUTSIDE TMZ",
+        miles_from_boundary=abs(miles_from_boundary),
+        budget_impact=budget_impact,
+        union_implications=union_implications,
+    )
 
 
 @app.post("/api/chat", response_model=ChatResponse)
@@ -181,10 +336,10 @@ CURRENT USER ROLE: {req.user_role}
 
 If an image is provided, visually assess it: identify setting type (urban/residential/industrial/natural), estimate crew access, flag any visible compliance concerns."""
 
-    # 3. Build conversation history for the API call
+    # 3. Build conversation history
     history = [{"role": m.role, "content": m.content} for m in (req.conversation_history or [])]
 
-    # 4. Call OpenAI — use vision route if image is attached, otherwise standard text
+    # 4. Call OpenAI — vision route if image attached, otherwise text
     try:
         if req.image_base64:
             reply = call_llm_with_image(
