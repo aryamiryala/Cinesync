@@ -407,6 +407,368 @@ function TmzLookupPanel({ onClose }) {
   )
 }
 
+// ─── Sun Path Panel ───────────────────────────────────────────────────────────
+function SunPathDiagram({ result }) {
+  const W = 440, H = 210
+  const cx = W / 2, cy = H - 10
+  const R = 175
+
+  // Parse "06:16 AM" → minutes since midnight
+  const toMins = (str) => {
+    if (!str) return 0
+    const [time, period] = str.split(' ')
+    let [h, m] = time.split(':').map(Number)
+    if (period === 'PM' && h !== 12) h += 12
+    if (period === 'AM' && h === 12) h = 0
+    return h * 60 + m
+  }
+
+  const sunriseMins = toMins(result.sunrise)
+  const sunsetMins  = toMins(result.sunset)
+  const span = sunsetMins - sunriseMins
+
+  // Map a time string to SVG coordinates on the arc
+  // angle 0=east(left), 180=west(right), sun travels left→right
+  const timeToPoint = (str) => {
+    const mins = toMins(str)
+    const t = Math.max(0, Math.min(1, (mins - sunriseMins) / span))
+    const angleDeg = t * 180                          // 0° = east, 180° = west
+    const angleRad = (angleDeg * Math.PI) / 180
+    return {
+      x: cx - R * Math.cos(Math.PI - angleRad),      // left→right
+      y: cy - R * Math.sin(angleRad),
+    }
+  }
+
+  // Build arc path segment between two time strings
+  const arcSegment = (t1, t2) => {
+    const p1 = timeToPoint(t1)
+    const p2 = timeToPoint(t2)
+    return `M ${p1.x} ${p1.y} A ${R} ${R} 0 0 1 ${p2.x} ${p2.y}`
+  }
+
+  const keyTimes = [
+    { label: 'Sunrise', time: result.sunrise, color: '#F5A623' },
+    { label: 'G.H.', time: result.golden_hour_morning_end, color: '#FCD34D' },
+    { label: 'Noon', time: result.solar_noon, color: '#E4E8F0' },
+    { label: 'G.H.', time: result.golden_hour_evening_start, color: '#FCD34D' },
+    { label: 'Sunset', time: result.sunset, color: '#F5A623' },
+  ]
+
+  // Compute label offsets to avoid overlap — labels near the horizon get pushed outward
+  const getLabelOffset = (pt) => {
+    const nearLeft  = pt.x < cx * 0.5                 // left quarter → push label left
+    const nearRight = pt.x > cx + cx * 0.5            // right quarter → push label right
+    const nearTop   = pt.y < cy * 0.35                // near zenith → push label up more
+    return {
+      dx: nearLeft ? -4 : nearRight ? 4 : 0,
+      dy: nearTop ? -18 : -12,
+      anchor: nearLeft ? 'end' : nearRight ? 'start' : 'middle',
+    }
+  }
+
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto', display: 'block' }}>
+      {/* Sky gradient background */}
+      <defs>
+        <radialGradient id="skygrad" cx="50%" cy="100%" r="60%">
+          <stop offset="0%" stopColor="#1C2230" />
+          <stop offset="100%" stopColor="#0D1117" />
+        </radialGradient>
+        <clipPath id="skyClip">
+          <rect x="0" y="0" width={W} height={cy} />
+        </clipPath>
+      </defs>
+      <rect x="0" y="0" width={W} height={H} fill="#0D1117" rx="8" />
+      <ellipse cx={cx} cy={cy} rx={R + 20} ry={R * 0.4} fill="#0A1628" />
+
+      {/* Horizon line */}
+      <line x1={20} y1={cy} x2={W - 20} y2={cy} stroke="#252D3D" strokeWidth="1.5" />
+
+      {/* Full arc (daylight track) */}
+      <path
+        d={`M ${timeToPoint(result.sunrise).x} ${timeToPoint(result.sunrise).y} A ${R} ${R} 0 0 1 ${timeToPoint(result.sunset).x} ${timeToPoint(result.sunset).y}`}
+        fill="none" stroke="#1E2A3A" strokeWidth="6" strokeLinecap="round"
+      />
+
+      {/* Morning golden hour arc */}
+      <path
+        d={arcSegment(result.golden_hour_morning_start, result.golden_hour_morning_end)}
+        fill="none" stroke="#F5A623" strokeWidth="6" strokeLinecap="round" opacity="0.85"
+      />
+
+      {/* Evening golden hour arc */}
+      <path
+        d={arcSegment(result.golden_hour_evening_start, result.golden_hour_evening_end)}
+        fill="none" stroke="#F5A623" strokeWidth="6" strokeLinecap="round" opacity="0.85"
+      />
+
+      {/* Blue hour arc */}
+      <path
+        d={arcSegment(result.sunset, result.dusk)}
+        fill="none" stroke="#3ECFBF" strokeWidth="4" strokeLinecap="round" opacity="0.6"
+      />
+
+      {/* Key time markers */}
+      {keyTimes.map(({ label, time, color }) => {
+        const pt = timeToPoint(time)
+        const { dx, dy, anchor } = getLabelOffset(pt)
+        return (
+          <g key={label + time}>
+            <circle cx={pt.x} cy={pt.y} r={5} fill={color} />
+            <text
+              x={pt.x + dx}
+              y={pt.y + dy}
+              textAnchor={anchor}
+              fontSize="9"
+              fill={color}
+              fontFamily="monospace"
+            >{time}</text>
+          </g>
+        )
+      })}
+
+      {/* Sun icon at solar noon */}
+      {(() => {
+        const pt = timeToPoint(result.solar_noon)
+        return (
+          <g>
+            <circle cx={pt.x} cy={pt.y} r={8} fill="#FCD34D" opacity="0.9" />
+            <circle cx={pt.x} cy={pt.y} r={12} fill="none" stroke="#FCD34D" strokeWidth="1.5" opacity="0.4" />
+          </g>
+        )
+      })()}
+
+      {/* Direction labels */}
+      <text x={28} y={cy - 8} fontSize="10" fill="#4A5568" fontFamily="monospace">EAST</text>
+      <text x={W - 48} y={cy - 8} fontSize="10" fill="#4A5568" fontFamily="monospace">WEST</text>
+
+      {/* Legend */}
+      <rect x={12} y={12} width={10} height={4} rx="2" fill="#F5A623" />
+      <text x={26} y={19} fontSize="9" fill="#8A95A8" fontFamily="monospace">Golden Hour</text>
+      <rect x={110} y={12} width={10} height={4} rx="2" fill="#3ECFBF" />
+      <text x={124} y={19} fontSize="9" fill="#8A95A8" fontFamily="monospace">Blue Hour</text>
+    </svg>
+  )
+}
+
+function SunPathPanel({ onClose }) {
+  const [address, setAddress] = useState('')
+  const [shootDate, setShootDate] = useState(new Date().toISOString().split('T')[0])
+  const [loading, setLoading] = useState(false)
+  const [result, setResult] = useState(null)
+  const [error, setError] = useState(null)
+
+  const handleLookup = async () => {
+    if (!address.trim()) return
+    setLoading(true)
+    setResult(null)
+    setError(null)
+    try {
+      const res = await fetch('/api/sun-path', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ address: address.trim(), shoot_date: shootDate }),
+      })
+      if (!res.ok) {
+        const err = await res.json()
+        throw new Error(err.detail || 'Lookup failed')
+      }
+      setResult(await res.json())
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const windowColors = { golden: '#F5A623', neutral: '#8A95A8', blue: '#3ECFBF' }
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 100,
+      background: 'rgba(0,0,0,0.6)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      overflowY: 'auto', padding: '20px 0',
+    }}
+      onClick={e => { if (e.target === e.currentTarget) onClose() }}
+    >
+      <div style={{
+        width: 500, maxWidth: '95vw',
+        background: 'var(--bg-surface)',
+        border: '1px solid var(--border-bright)',
+        borderRadius: 12,
+        overflow: 'hidden',
+        boxShadow: '0 24px 80px rgba(0,0,0,0.6)',
+        margin: 'auto',
+      }}>
+        {/* Header */}
+        <div style={{
+          padding: '16px 20px',
+          borderBottom: '1px solid var(--border)',
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          background: 'var(--bg-elevated)',
+        }}>
+          <div>
+            <div style={{
+              fontFamily: 'var(--font-display)', fontSize: 16, fontWeight: 700,
+              color: '#FCD34D', letterSpacing: '0.06em',
+            }}>
+              ☀️ SUN PATH ANALYZER
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 2 }}>
+              Golden hour, blue hour &amp; shooting windows
+            </div>
+          </div>
+          <button onClick={onClose} style={{
+            background: 'none', border: 'none', color: 'var(--text-muted)',
+            cursor: 'pointer', fontSize: 20, lineHeight: 1,
+          }}>×</button>
+        </div>
+
+        {/* Inputs */}
+        <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ marginBottom: 10 }}>
+            <label style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', display: 'block', marginBottom: 6 }}>
+              LOCATION ADDRESS
+            </label>
+            <input
+              value={address}
+              onChange={e => setAddress(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && handleLookup()}
+              placeholder="e.g. Griffith Observatory, Los Angeles"
+              style={{
+                width: '100%', padding: '9px 12px',
+                background: 'var(--bg-input)',
+                border: '1px solid var(--border-bright)',
+                borderRadius: 7, color: 'var(--text-primary)',
+                fontSize: 13, fontFamily: 'var(--font-body)',
+                outline: 'none', boxSizing: 'border-box',
+              }}
+            />
+          </div>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
+            <div style={{ flex: 1 }}>
+              <label style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', display: 'block', marginBottom: 6 }}>
+                SHOOT DATE
+              </label>
+              <input
+                type="date"
+                value={shootDate}
+                onChange={e => setShootDate(e.target.value)}
+                style={{
+                  width: '100%', padding: '9px 12px',
+                  background: 'var(--bg-input)',
+                  border: '1px solid var(--border-bright)',
+                  borderRadius: 7, color: 'var(--text-primary)',
+                  fontSize: 13, fontFamily: 'var(--font-body)',
+                  outline: 'none', boxSizing: 'border-box',
+                  colorScheme: 'dark',
+                }}
+              />
+            </div>
+            <button
+              onClick={handleLookup}
+              disabled={loading || !address.trim()}
+              style={{
+                padding: '9px 20px',
+                background: loading || !address.trim() ? 'var(--bg-elevated)' : '#FCD34D',
+                color: loading || !address.trim() ? 'var(--text-muted)' : '#0A0C10',
+                border: 'none', borderRadius: 7,
+                fontSize: 13, fontWeight: 700,
+                fontFamily: 'var(--font-display)', letterSpacing: '0.06em',
+                cursor: loading || !address.trim() ? 'default' : 'pointer',
+                transition: 'all 0.15s', flexShrink: 0, whiteSpace: 'nowrap',
+              }}
+            >
+              {loading ? 'CALCULATING...' : 'ANALYZE'}
+            </button>
+          </div>
+        </div>
+
+        {/* Error */}
+        {error && (
+          <div style={{ padding: '14px 20px', background: 'rgba(232,65,106,0.08)', borderBottom: '1px solid var(--border)' }}>
+            <span style={{ fontSize: 13, color: '#E8416A', fontFamily: 'var(--font-mono)' }}>⚠ {error}</span>
+          </div>
+        )}
+
+        {/* Result */}
+        {result && (
+          <div style={{ padding: '16px 20px' }}>
+
+            {/* Location + date summary */}
+            <div style={{
+              padding: '8px 14px', borderRadius: 6,
+              background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+              marginBottom: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+            }}>
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{result.resolved_address.split(',').slice(0, 2).join(',')}</div>
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                {result.total_daylight_hours}h daylight
+              </div>
+            </div>
+
+            {/* SVG Diagram */}
+            <div style={{
+              borderRadius: 8, overflow: 'hidden',
+              border: '1px solid var(--border)',
+              marginBottom: 14,
+            }}>
+              <SunPathDiagram result={result} />
+            </div>
+
+            {/* Key times row */}
+            <div style={{
+              display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8,
+              marginBottom: 14,
+            }}>
+              {[
+                { label: 'SUNRISE', value: result.sunrise, color: '#F5A623' },
+                { label: 'SOLAR NOON', value: result.solar_noon, color: '#E4E8F0' },
+                { label: 'SUNSET', value: result.sunset, color: '#F5A623' },
+              ].map(({ label, value, color }) => (
+                <div key={label} style={{
+                  padding: '8px 10px', borderRadius: 6,
+                  background: 'var(--bg-elevated)', border: '1px solid var(--border)',
+                  textAlign: 'center',
+                }}>
+                  <div style={{ fontSize: 9, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', marginBottom: 3 }}>{label}</div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color, fontFamily: 'var(--font-display)' }}>{value}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Shooting windows */}
+            <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', marginBottom: 8 }}>
+              SHOOTING WINDOWS
+            </div>
+            {result.shooting_windows.map((w, i) => (
+              <div key={i} style={{
+                padding: '10px 14px', borderRadius: 6,
+                background: 'var(--bg-elevated)',
+                border: `1px solid ${windowColors[w.type]}33`,
+                marginBottom: 8,
+              }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: windowColors[w.type], fontFamily: 'var(--font-display)', letterSpacing: '0.04em' }}>
+                    {w.label}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                    {w.start} – {w.end}
+                  </div>
+                </div>
+                <div style={{ fontSize: 11, color: '#60A5FA', marginBottom: 3, fontFamily: 'var(--font-mono)' }}>{w.direction}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>{w.notes}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ─── Initial demo messages ────────────────────────────────────────────────────
 const now = new Date()
 const fmt = (d) => d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
@@ -461,6 +823,7 @@ export default function App() {
   const [backendStatus, setBackendStatus] = useState('checking')
   const [history, setHistory] = useState([])
   const [showTmzLookup, setShowTmzLookup] = useState(false)
+  const [showSunPath, setShowSunPath] = useState(false)
 
   const fileInputRef = useRef(null)
   const chatEndRef = useRef(null)
@@ -581,6 +944,7 @@ export default function App() {
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', fontFamily: 'var(--font-body)' }}>
 
       {showTmzLookup && <TmzLookupPanel onClose={() => setShowTmzLookup(false)} />}
+      {showSunPath && <SunPathPanel onClose={() => setShowSunPath(false)} />}
 
       {/* ── Left Sidebar ─────────────────────────────── */}
       <div style={{
@@ -648,6 +1012,7 @@ export default function App() {
               cursor: 'pointer',
               transition: 'all 0.15s',
               textAlign: 'left',
+              marginBottom: 8,
             }}
             onMouseEnter={e => {
               e.currentTarget.style.borderColor = 'rgba(245,166,35,0.5)'
@@ -665,6 +1030,39 @@ export default function App() {
               </div>
               <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
                 Check any address
+              </div>
+            </div>
+          </button>
+
+          <button
+            onClick={() => setShowSunPath(true)}
+            style={{
+              width: '100%',
+              padding: '9px 12px',
+              background: 'var(--bg-elevated)',
+              border: '1px solid var(--border-bright)',
+              borderRadius: 7,
+              display: 'flex', alignItems: 'center', gap: 8,
+              cursor: 'pointer',
+              transition: 'all 0.15s',
+              textAlign: 'left',
+            }}
+            onMouseEnter={e => {
+              e.currentTarget.style.borderColor = 'rgba(252,211,77,0.5)'
+              e.currentTarget.style.background = 'rgba(252,211,77,0.08)'
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.borderColor = 'var(--border-bright)'
+              e.currentTarget.style.background = 'var(--bg-elevated)'
+            }}
+          >
+            <span style={{ fontSize: 15 }}>☀️</span>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 600, color: '#FCD34D', fontFamily: 'var(--font-display)', letterSpacing: '0.04em' }}>
+                SUN PATH
+              </div>
+              <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                Golden hour & shoot windows
               </div>
             </div>
           </button>

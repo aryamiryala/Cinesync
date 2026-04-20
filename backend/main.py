@@ -9,6 +9,9 @@ import math
 import urllib.request
 import urllib.parse
 import json
+from datetime import date, datetime
+from astral import LocationInfo
+from astral.sun import sun
 
 app = FastAPI(title="Cinesync Backend")
 
@@ -296,6 +299,129 @@ async def tmz_lookup(req: TmzLookupRequest):
         budget_impact=budget_impact,
         union_implications=union_implications,
     )
+
+
+class SunPathRequest(BaseModel):
+    address: str
+    shoot_date: Optional[str] = None  # ISO format YYYY-MM-DD, defaults to today
+
+
+class SunPathResponse(BaseModel):
+    address: str
+    resolved_address: str
+    latitude: float
+    longitude: float
+    shoot_date: str
+    dawn: str
+    sunrise: str
+    golden_hour_morning_start: str
+    golden_hour_morning_end: str
+    solar_noon: str
+    golden_hour_evening_start: str
+    golden_hour_evening_end: str
+    sunset: str
+    dusk: str
+    total_daylight_hours: float
+    shooting_windows: List[dict]   # [{label, start, end, direction, notes}]
+
+
+@app.post("/api/sun-path", response_model=SunPathResponse)
+async def sun_path(req: SunPathRequest):
+    """
+    Returns sun times + golden hour windows for any address and date.
+    Uses the astral library — no external API needed.
+    """
+    try:
+        lat, lon, resolved = geocode_address(req.address)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Geocoding failed: {str(e)}")
+
+    if lat is None:
+        raise HTTPException(status_code=404, detail=f"Could not find location: {req.address}")
+
+    try:
+        shoot_date = date.fromisoformat(req.shoot_date) if req.shoot_date else date.today()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD.")
+
+    loc = LocationInfo(
+        name=resolved[:40],
+        region="CA",
+        timezone="America/Los_Angeles",
+        latitude=lat,
+        longitude=lon,
+    )
+
+    s = sun(loc.observer, date=shoot_date, tzinfo=loc.timezone)
+
+    # Calculate golden hours manually from sunrise/sunset — more reliable than
+    # astral's golden_hour() which can return inconsistent results across versions.
+    # Morning golden hour: 30 min before sunrise → 1 hour after sunrise
+    # Evening golden hour: 1 hour before sunset → 30 min after sunset
+    from datetime import timedelta
+    gh_morning_start = s["sunrise"] - timedelta(minutes=30)
+    gh_morning_end   = s["sunrise"] + timedelta(hours=1)
+    gh_evening_start = s["sunset"]  - timedelta(hours=1)
+    gh_evening_end   = s["sunset"]  + timedelta(minutes=30)
+
+    fmt = lambda dt: dt.strftime("%I:%M %p")
+
+    daylight = (s["sunset"] - s["sunrise"]).seconds / 3600
+
+    shooting_windows = [
+        {
+            "label": "Morning Golden Hour",
+            "start": fmt(gh_morning_start),
+            "end": fmt(gh_morning_end),
+            "direction": "East-facing",
+            "notes": "Warm low-angle light. Best for east-facing exteriors. Shadows long and dramatic.",
+            "type": "golden"
+        },
+        {
+            "label": "Midday Overcast Safe Zone",
+            "start": fmt(s["sunrise"]),
+            "end": fmt(s["noon"]),
+            "direction": "Any facing",
+            "notes": "Consistent diffused light on overcast days. Harsh direct sun midday — use diffusion.",
+            "type": "neutral"
+        },
+        {
+            "label": "Evening Golden Hour",
+            "start": fmt(gh_evening_start),
+            "end": fmt(gh_evening_end),
+            "direction": "West-facing",
+            "notes": "Peak cinematic light. Best for west-facing exteriors. 30–40 min magic hour window.",
+            "type": "golden"
+        },
+        {
+            "label": "Blue Hour",
+            "start": fmt(s["sunset"]),
+            "end": fmt(s["dusk"]),
+            "direction": "Any facing",
+            "notes": "Cool blue ambient light, no direct sun. Great for moody urban scenes. ~20 min window.",
+            "type": "blue"
+        },
+    ]
+
+    return SunPathResponse(
+        address=req.address,
+        resolved_address=resolved,
+        latitude=round(lat, 6),
+        longitude=round(lon, 6),
+        shoot_date=shoot_date.isoformat(),
+        dawn=fmt(s["dawn"]),
+        sunrise=fmt(s["sunrise"]),
+        golden_hour_morning_start=fmt(gh_morning_start),
+        golden_hour_morning_end=fmt(gh_morning_end),
+        solar_noon=fmt(s["noon"]),
+        golden_hour_evening_start=fmt(gh_evening_start),
+        golden_hour_evening_end=fmt(gh_evening_end),
+        sunset=fmt(s["sunset"]),
+        dusk=fmt(s["dusk"]),
+        total_daylight_hours=round(daylight, 1),
+        shooting_windows=shooting_windows,
+    )
+
 
 
 @app.post("/api/chat", response_model=ChatResponse)
