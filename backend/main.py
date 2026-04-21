@@ -9,7 +9,7 @@ import math
 import urllib.request
 import urllib.parse
 import json
-from datetime import date, datetime
+from datetime import date, timedelta
 from astral import LocationInfo
 from astral.sun import sun
 
@@ -24,22 +24,25 @@ app.add_middleware(
 )
 
 # ─── ChromaDB Setup ───────────────────────────────────────────────────────────
-chroma_client = chromadb.Client()
-embedding_fn = embedding_functions.DefaultEmbeddingFunction()
+# PersistentClient loads the PDF-ingested knowledge base from disk.
+# Run ingest_docs.py once before starting the server to populate chroma_db/.
+chroma_client = chromadb.PersistentClient(path="./chroma_db")
+
+embedding_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
+    model_name="all-MiniLM-L6-v2"
+)
+
 collection = chroma_client.get_or_create_collection(
-    name="film_knowledge",
-    embedding_function=embedding_fn
+    name="cinesync_knowledge",
+    embedding_function=embedding_fn,
+    metadata={"hnsw:space": "cosine"},
 )
 
 # ─── TMZ Constants ────────────────────────────────────────────────────────────
-# TMZ center: Beverly Blvd & La Cienega Blvd, Los Angeles
 TMZ_CENTER_LAT = 34.0803
 TMZ_CENTER_LON = -118.3603
 TMZ_RADIUS_MILES = 30.0
 
-# The TMZ boundary is a contractual definition, not a perfect geometric circle.
-# Some areas (e.g. Malibu) are geographically within 30 miles but are
-# contractually OUTSIDE TMZ. This lookup table overrides the math for known cases.
 KNOWN_OUTSIDE_TMZ = {
     'malibu', 'long beach', 'anaheim', 'santa ana', 'irvine', 'orange',
     'ventura', 'oxnard', 'thousand oaks', 'simi valley', 'moorpark',
@@ -62,12 +65,13 @@ KNOWN_INSIDE_TMZ = {
     'alhambra', 'san gabriel', 'temple city', 'rosemead', 'baldwin park',
     'beverly hills', 'bel air', 'brentwood', 'pacific palisades',
     'koreatown', 'downtown', 'arts district', 'boyle heights',
+    # DGA 13-214(h) secondary zone areas treated as inside TMZ
+    'agua dulce', 'castaic', 'leo carrillo', 'piru',
 }
 
 
-def haversine_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Calculate distance in miles between two GPS coordinates."""
-    R = 3958.8  # Earth radius in miles
+def haversine_miles(lat1, lon1, lat2, lon2) -> float:
+    R = 3958.8
     phi1, phi2 = math.radians(lat1), math.radians(lat2)
     dphi = math.radians(lat2 - lat1)
     dlambda = math.radians(lon2 - lon1)
@@ -76,28 +80,17 @@ def haversine_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> float
 
 
 def check_tmz_status(resolved_address: str, distance_miles: float) -> bool:
-    """
-    Hybrid TMZ check: city lookup table takes priority over geometry.
-    The TMZ is a contractual boundary, not a perfect 30-mile circle.
-    """
     addr_lower = resolved_address.lower()
-
-    # Check known outside cities first
     for city in KNOWN_OUTSIDE_TMZ:
         if city in addr_lower:
-            return False  # outside TMZ
-
-    # Check known inside cities
+            return False
     for city in KNOWN_INSIDE_TMZ:
         if city in addr_lower:
-            return True  # inside TMZ
-
-    # Fall back to geometry for unknown locations
+            return True
     return distance_miles <= TMZ_RADIUS_MILES
 
 
 def geocode_address(address: str):
-    """Convert address string to lat/lon using OpenStreetMap Nominatim (free, no API key)."""
     params = urllib.parse.urlencode({'q': address, 'format': 'json', 'limit': 1})
     url = f"https://nominatim.openstreetmap.org/search?{params}"
     req = urllib.request.Request(url, headers={'User-Agent': 'Cinesync/1.0 (class project)'})
@@ -108,91 +101,45 @@ def geocode_address(address: str):
     return None, None, None
 
 
-# ─── Knowledge Base Seeding ───────────────────────────────────────────────────
-FILM_KNOWLEDGE = [
-    # TMZ Zone
-    {
-        "text": "The Thirty Mile Zone (TMZ) is centered at Beverly Blvd & La Cienega Blvd in Los Angeles with a 30-mile radius. Inside the TMZ: no travel allowances required. Outside the TMZ: production must pay hotel accommodations and per diem of $125–200/day per crew member, adding $50K–$200K/week to budget.",
-        "meta": {"category": "tmz", "topic": "TMZ Zone Definition"},
-    },
-    {
-        "text": "TMZ Geographic Reference: INSIDE TMZ — Downtown LA, Santa Monica, Burbank, Pasadena, Culver City, Hollywood, West Hollywood, Glendale, Arcadia. OUTSIDE TMZ — Malibu, Long Beach, Anaheim, San Bernardino, Ventura. Always verify GPS coordinates against the official TMZ boundary map.",
-        "meta": {"category": "tmz", "topic": "TMZ Geographic Landmarks"},
-    },
-    # Permits
-    {
-        "text": "FilmLA Permit Categories: Cat 1 (Minimal, <15 crew, no trucks): 1–2 day lead, ~$700 fee. Cat 2 (Low, 15–49 crew): 3–5 day lead, ~$1,200 fee. Cat 3 (Moderate, 50–149 crew): 5–10 day lead, ~$2,500 fee. Cat 4 (High Impact, 150+ crew): 10–20 day lead, ~$5,000+ fee, requires community notification.",
-        "meta": {"category": "permits", "topic": "FilmLA Permit Categories and Lead Times"},
-    },
-    {
-        "text": "FilmLA daily location fees: City streets $1,200–3,500/day. Public parks $500–2,000/day. Beaches $1,000–4,000/day. Government buildings $2,000–8,000/day. On-set LAPD officers $35–50/hr each. LAFD fire safety officers $45–65/hr. Traffic control officers $40–55/hr.",
-        "meta": {"category": "permits", "topic": "FilmLA Permit Fees"},
-    },
-    # Noise
-    {
-        "text": "LA Noise Ordinance for Film: Permitted hours in RESIDENTIAL zones — Mon–Fri 7AM–10PM, Saturday 9AM–11PM, Sunday & holidays 10AM–11PM. Extended hours require a variance permit and written community notification 72 hours in advance. Generators must be baffled to 55 dB at the property line.",
-        "meta": {"category": "noise", "topic": "Noise Ordinance Residential Hours"},
-    },
-    {
-        "text": "Special Effects permits: All pyrotechnics require LAFD Fire Safety Officer on set. Smoke effects in buildings need separate LAFD permit. Gunshots/simulated gunfire require both FilmLA and LAPD permits. Fake rain effects may require storm drain permits from LA Sanitation.",
-        "meta": {"category": "noise", "topic": "Special Effects and Pyrotechnics"},
-    },
-    # Logistics
-    {
-        "text": "Production vehicle logistics: Standard production semi-trucks are 53ft. Location streets need min 14ft height clearance, 12ft width clearance. Residential street weight limit typically 3 tons; commercial/downtown streets handle up to 80,000 lbs. Basecamp must be within 1 mile of set. Large productions need 10–30 truck parking spaces.",
-        "meta": {"category": "logistics", "topic": "Production Vehicle Access"},
-    },
-    {
-        "text": "LAFD access requirements: Emergency vehicle lanes must remain clear at minimum 20ft width at all times during filming. Any street closure requires LAPD traffic control. Hydrant clearance: 15ft minimum. No production equipment within 10ft of fire department connections.",
-        "meta": {"category": "logistics", "topic": "LAFD Safety Requirements"},
-    },
-    # Union Rules
-    {
-        "text": "DGA Rules: Director requires minimum 12-hour turnaround between shooting days. AD must be on set whenever cameras roll. Director must be notified of location changes 48 hours in advance. Any location within TMZ does not trigger location premium pay. Outside TMZ: $50 location premium per crew member per day.",
-        "meta": {"category": "union", "topic": "DGA Director Rules"},
-    },
-    {
-        "text": "IATSE Local 44 (Art Department): Location survey required 72 hours before shoot day. Any location modification (painting walls, removing fixtures) requires written owner consent. Restoration bond typically 10–20% of location fee. Scenic artists have a 10-hour minimum call.",
-        "meta": {"category": "union", "topic": "IATSE Art Department Rules"},
-    },
-    # LA Locations
-    {
-        "text": "Downtown LA (DTLA): INSIDE TMZ. Book streets 3+ weeks in advance. Popular for urban/corporate/futuristic scenes. Key sub-zones: Arts District (industrial/brick aesthetic, lower permit cost), Financial District (corporate glass towers, higher permit), Historic Core (vintage buildings, 1920s–40s look). LAPD film detail required for any street closure.",
-        "meta": {"category": "locations", "topic": "Downtown LA Filming"},
-    },
-    {
-        "text": "Venice Beach: INSIDE TMZ. Boardwalk requires separate LA Parks permit in addition to FilmLA. Ocean Front Walk fee: $2,000–5,000/day. Venice Canals available for intimate/residential scenes. Very limited truck parking — must pre-arrange with FilmLA designated lots. Background control team usually required for boardwalk scenes.",
-        "meta": {"category": "locations", "topic": "Venice Beach Filming"},
-    },
-    {
-        "text": "Griffith Park: LA Recreation & Parks permit required IN ADDITION to FilmLA. Observatory area: no cranes or camera dollies on paved paths. Golden hour/magic hour slots heavily competed — book 4+ weeks ahead. Trail areas require crew to pack in all equipment. No generators in park — must use battery/hybrid alternatives.",
-        "meta": {"category": "locations", "topic": "Griffith Park Filming"},
-    },
-    {
-        "text": "Malibu & Pacific Coast Highway: OUTSIDE TMZ — triggers full crew travel pay and per diem. California Coastal Commission permit required for any beach scenes in addition to FilmLA. PCH closures require Caltrans approval minimum 3 weeks. Environmental compliance required for any production within 100ft of ocean.",
-        "meta": {"category": "locations", "topic": "Malibu Filming"},
-    },
-    # Sun/Light
-    {
-        "text": "Sun position and natural light for LA filming: Golden hour (sunrise) typically 6:30–7:30 AM. Golden hour (sunset) typically 5:30–7:00 PM depending on season. Magic hour lasts approximately 20–40 minutes. For west-facing locations, best natural light is late afternoon 3–6 PM. For east-facing, best is morning 7–10 AM. North-facing gives consistent diffused light all day.",
-        "meta": {"category": "creative", "topic": "Natural Light and Sun Position"},
-    },
-]
+# ─── RAG Query ────────────────────────────────────────────────────────────────
+# Role → doc_types most relevant, used for metadata pre-filtering
+ROLE_DOC_FILTERS = {
+    "Producer":               ["permit_requirements", "fee_schedule", "union_rules"],
+    "Location Manager":       ["permit_requirements", "fee_schedule", "department_requirements", "tmz_zone"],
+    "Assistant Director (AD)":["union_rules", "permit_requirements", "department_requirements"],
+    "Director":               ["tmz_zone", "permit_requirements", "union_rules"],
+    "Production Designer":    ["permit_requirements", "department_requirements"],
+}
 
 
-def seed_knowledge_base():
-    if collection.count() == 0:
-        texts = [d["text"] for d in FILM_KNOWLEDGE]
-        metas = [d["meta"] for d in FILM_KNOWLEDGE]
-        ids = [f"doc_{i}" for i in range(len(texts))]
-        collection.add(documents=texts, metadatas=metas, ids=ids)
-        print(f"Seeded {len(texts)} documents into ChromaDB")
-    else:
-        print(f"ChromaDB already has {collection.count()} documents")
+def query_knowledge_base(query: str, user_role: str = "Location Manager", n_results: int = 6) -> List[str]:
+    """
+    Semantic search over ingested PDFs with optional role-based metadata filter.
+    Falls back to unfiltered search if the filtered query returns too few results.
+    """
+    doc_types = ROLE_DOC_FILTERS.get(user_role)
 
+    # Try filtered search first
+    if doc_types:
+        try:
+            results = collection.query(
+                query_texts=[query],
+                n_results=n_results,
+                where={"doc_type": {"$in": doc_types}},
+                include=["documents", "metadatas", "distances"],
+            )
+            docs = results["documents"][0] if results["documents"] else []
+            if len(docs) >= 3:
+                return docs
+        except Exception:
+            pass
 
-def query_knowledge_base(query: str, n_results: int = 4) -> List[str]:
-    results = collection.query(query_texts=[query], n_results=n_results)
+    # Fallback: unfiltered search across all docs
+    results = collection.query(
+        query_texts=[query],
+        n_results=n_results,
+        include=["documents", "metadatas", "distances"],
+    )
     return results["documents"][0] if results["documents"] else []
 
 
@@ -217,7 +164,7 @@ class ChatResponse(BaseModel):
 
 class TmzLookupRequest(BaseModel):
     address: str
-    crew_size: Optional[int] = 50  # for budget impact estimate
+    crew_size: Optional[int] = 50
 
 
 class TmzLookupResponse(BaseModel):
@@ -227,83 +174,15 @@ class TmzLookupResponse(BaseModel):
     longitude: float
     distance_miles: float
     inside_tmz: bool
-    status_label: str        # "INSIDE TMZ" or "OUTSIDE TMZ"
-    miles_from_boundary: float  # positive = inside, negative = outside
+    status_label: str
+    miles_from_boundary: float
     budget_impact: str
     union_implications: str
 
 
-# ─── Routes ───────────────────────────────────────────────────────────────────
-@app.on_event("startup")
-async def startup_event():
-    seed_knowledge_base()
-
-
-@app.get("/health")
-def health_check():
-    return {"status": "ok", "knowledge_docs": collection.count()}
-
-
-@app.post("/api/tmz-lookup", response_model=TmzLookupResponse)
-async def tmz_lookup(req: TmzLookupRequest):
-    """
-    Takes any address, geocodes it, and returns TMZ status + budget implications.
-    Uses OpenStreetMap Nominatim — free, no API key required.
-    """
-    try:
-        lat, lon, resolved = geocode_address(req.address)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Geocoding failed: {str(e)}")
-
-    if lat is None:
-        raise HTTPException(status_code=404, detail=f"Could not find location: {req.address}")
-
-    distance = haversine_miles(TMZ_CENTER_LAT, TMZ_CENTER_LON, lat, lon)
-    inside = check_tmz_status(resolved, distance)
-    miles_from_boundary = round(TMZ_RADIUS_MILES - distance, 2)  # positive=inside, negative=outside
-
-    crew = req.crew_size or 50
-
-    if inside:
-        budget_impact = "No travel allowances required. Crew works under standard local rates."
-        union_implications = (
-            f"No location premium triggered. No per diem required. "
-            f"Estimated crew cost savings vs. outside TMZ: "
-            f"${crew * 150:,}–${crew * 200:,}/week."
-        )
-    else:
-        daily_perdiem_low = crew * 125
-        daily_perdiem_high = crew * 200
-        weekly_low = daily_perdiem_low * 5
-        weekly_high = daily_perdiem_high * 5
-        budget_impact = (
-            f"OUTSIDE TMZ triggers full travel pay. "
-            f"Per diem: ${daily_perdiem_low:,}–${daily_perdiem_high:,}/day for {crew} crew. "
-            f"Weekly additional cost: ${weekly_low:,}–${weekly_high:,}. "
-            f"Hotel accommodations required on top of per diem."
-        )
-        union_implications = (
-            f"DGA/IATSE location premium: $50/crew member/day = ${crew * 50:,}/day. "
-            f"AD must notify Director of location status 48 hrs in advance."
-        )
-
-    return TmzLookupResponse(
-        address=req.address,
-        resolved_address=resolved,
-        latitude=round(lat, 6),
-        longitude=round(lon, 6),
-        distance_miles=round(distance, 2),
-        inside_tmz=inside,
-        status_label="INSIDE TMZ" if inside else "OUTSIDE TMZ",
-        miles_from_boundary=abs(miles_from_boundary),
-        budget_impact=budget_impact,
-        union_implications=union_implications,
-    )
-
-
 class SunPathRequest(BaseModel):
     address: str
-    shoot_date: Optional[str] = None  # ISO format YYYY-MM-DD, defaults to today
+    shoot_date: Optional[str] = None
 
 
 class SunPathResponse(BaseModel):
@@ -322,20 +201,86 @@ class SunPathResponse(BaseModel):
     sunset: str
     dusk: str
     total_daylight_hours: float
-    shooting_windows: List[dict]   # [{label, start, end, direction, notes}]
+    shooting_windows: List[dict]
 
 
-@app.post("/api/sun-path", response_model=SunPathResponse)
-async def sun_path(req: SunPathRequest):
-    """
-    Returns sun times + golden hour windows for any address and date.
-    Uses the astral library — no external API needed.
-    """
+# ─── Routes ───────────────────────────────────────────────────────────────────
+@app.on_event("startup")
+async def startup_event():
+    count = collection.count()
+    if count == 0:
+        print("⚠️  WARNING: ChromaDB collection is empty.")
+        print("   Run: python ingest_docs.py")
+        print("   Then restart the server.")
+    else:
+        print(f"✅ ChromaDB loaded — {count} chunks ready")
+
+
+@app.get("/health")
+def health_check():
+    return {
+        "status": "ok",
+        "knowledge_chunks": collection.count(),
+        "llm_backend": "llama.cpp @ localhost:8001",
+    }
+
+
+@app.post("/api/tmz-lookup", response_model=TmzLookupResponse)
+async def tmz_lookup(req: TmzLookupRequest):
     try:
         lat, lon, resolved = geocode_address(req.address)
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"Geocoding failed: {str(e)}")
+    if lat is None:
+        raise HTTPException(status_code=404, detail=f"Could not find location: {req.address}")
 
+    distance = haversine_miles(TMZ_CENTER_LAT, TMZ_CENTER_LON, lat, lon)
+    inside = check_tmz_status(resolved, distance)
+    miles_from_boundary = round(TMZ_RADIUS_MILES - distance, 2)
+    crew = req.crew_size or 50
+
+    if inside:
+        budget_impact = "No travel allowances required. Crew works under standard local rates."
+        union_implications = (
+            f"No location premium triggered. No per diem required. "
+            f"Estimated crew cost savings vs. outside TMZ: "
+            f"${crew * 150:,}–${crew * 200:,}/week."
+        )
+    else:
+        daily_low = crew * 125
+        daily_high = crew * 200
+        budget_impact = (
+            f"OUTSIDE TMZ triggers full travel pay. "
+            f"Per diem: ${daily_low:,}–${daily_high:,}/day for {crew} crew. "
+            f"Weekly additional cost: ${daily_low*5:,}–${daily_high*5:,}. "
+            f"Hotel accommodations required on top of per diem."
+        )
+        union_implications = (
+            f"DGA/IATSE location premium: $50/crew member/day = ${crew * 50:,}/day. "
+            f"AD must notify Director of location status 48 hrs in advance. "
+            f"Per DGA 9-105: 24-hour Guild notice required before departure to distant location."
+        )
+
+    return TmzLookupResponse(
+        address=req.address,
+        resolved_address=resolved,
+        latitude=round(lat, 6),
+        longitude=round(lon, 6),
+        distance_miles=round(distance, 2),
+        inside_tmz=inside,
+        status_label="INSIDE TMZ" if inside else "OUTSIDE TMZ",
+        miles_from_boundary=abs(miles_from_boundary),
+        budget_impact=budget_impact,
+        union_implications=union_implications,
+    )
+
+
+@app.post("/api/sun-path", response_model=SunPathResponse)
+async def sun_path(req: SunPathRequest):
+    try:
+        lat, lon, resolved = geocode_address(req.address)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Geocoding failed: {str(e)}")
     if lat is None:
         raise HTTPException(status_code=404, detail=f"Could not find location: {req.address}")
 
@@ -351,57 +296,14 @@ async def sun_path(req: SunPathRequest):
         latitude=lat,
         longitude=lon,
     )
-
     s = sun(loc.observer, date=shoot_date, tzinfo=loc.timezone)
 
-    # Calculate golden hours manually from sunrise/sunset — more reliable than
-    # astral's golden_hour() which can return inconsistent results across versions.
-    # Morning golden hour: 30 min before sunrise → 1 hour after sunrise
-    # Evening golden hour: 1 hour before sunset → 30 min after sunset
-    from datetime import timedelta
     gh_morning_start = s["sunrise"] - timedelta(minutes=30)
     gh_morning_end   = s["sunrise"] + timedelta(hours=1)
     gh_evening_start = s["sunset"]  - timedelta(hours=1)
     gh_evening_end   = s["sunset"]  + timedelta(minutes=30)
-
     fmt = lambda dt: dt.strftime("%I:%M %p")
-
     daylight = (s["sunset"] - s["sunrise"]).seconds / 3600
-
-    shooting_windows = [
-        {
-            "label": "Morning Golden Hour",
-            "start": fmt(gh_morning_start),
-            "end": fmt(gh_morning_end),
-            "direction": "East-facing",
-            "notes": "Warm low-angle light. Best for east-facing exteriors. Shadows long and dramatic.",
-            "type": "golden"
-        },
-        {
-            "label": "Midday Overcast Safe Zone",
-            "start": fmt(s["sunrise"]),
-            "end": fmt(s["noon"]),
-            "direction": "Any facing",
-            "notes": "Consistent diffused light on overcast days. Harsh direct sun midday — use diffusion.",
-            "type": "neutral"
-        },
-        {
-            "label": "Evening Golden Hour",
-            "start": fmt(gh_evening_start),
-            "end": fmt(gh_evening_end),
-            "direction": "West-facing",
-            "notes": "Peak cinematic light. Best for west-facing exteriors. 30–40 min magic hour window.",
-            "type": "golden"
-        },
-        {
-            "label": "Blue Hour",
-            "start": fmt(s["sunset"]),
-            "end": fmt(s["dusk"]),
-            "direction": "Any facing",
-            "notes": "Cool blue ambient light, no direct sun. Great for moody urban scenes. ~20 min window.",
-            "type": "blue"
-        },
-    ]
 
     return SunPathResponse(
         address=req.address,
@@ -419,53 +321,81 @@ async def sun_path(req: SunPathRequest):
         sunset=fmt(s["sunset"]),
         dusk=fmt(s["dusk"]),
         total_daylight_hours=round(daylight, 1),
-        shooting_windows=shooting_windows,
+        shooting_windows=[
+            {
+                "label": "Morning Golden Hour",
+                "start": fmt(gh_morning_start),
+                "end": fmt(gh_morning_end),
+                "direction": "East-facing",
+                "notes": "Warm low-angle light. Best for east-facing exteriors.",
+                "type": "golden",
+            },
+            {
+                "label": "Midday",
+                "start": fmt(s["sunrise"]),
+                "end": fmt(s["noon"]),
+                "direction": "Any facing",
+                "notes": "Consistent diffused light on overcast days. Harsh direct sun midday.",
+                "type": "neutral",
+            },
+            {
+                "label": "Evening Golden Hour",
+                "start": fmt(gh_evening_start),
+                "end": fmt(gh_evening_end),
+                "direction": "West-facing",
+                "notes": "Peak cinematic light. 30–40 min magic hour window.",
+                "type": "golden",
+            },
+            {
+                "label": "Blue Hour",
+                "start": fmt(s["sunset"]),
+                "end": fmt(s["dusk"]),
+                "direction": "Any facing",
+                "notes": "Cool blue ambient light. Great for moody urban scenes. ~20 min window.",
+                "type": "blue",
+            },
+        ],
     )
-
 
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest):
-    # 1. RAG: Retrieve relevant context
-    context_docs = query_knowledge_base(req.message)
+    # 1. RAG: retrieve relevant PDF chunks, role-filtered
+    context_docs = query_knowledge_base(req.message, user_role=req.user_role)
     context = "\n\n---\n\n".join(context_docs)
 
-    # 2. Build role-tailored system prompt
+    # 2. Role-tailored instruction
     role_focus = {
-        "Director": "Focus on creative feasibility: lighting, aesthetic, visual constraints, and scene potential.",
-        "Producer": "Emphasize budget impact, permit costs, TMZ status affecting crew pay, and timeline risks.",
-        "Location Manager": "Provide detailed permit requirements, lead times, ordinances, and logistics.",
-        "Production Designer": "Focus on visual characteristics, modification possibilities, and restoration requirements.",
-        "Assistant Director (AD)": "Emphasize scheduling constraints, crew call times, turnaround rules, and safety.",
+        "Director": "Focus on creative feasibility: lighting, aesthetic, and scene potential.",
+        "Producer": "Emphasize budget impact, permit costs, TMZ status, and timeline risks.",
+        "Location Manager": "Provide detailed permit requirements, lead times, ordinances, logistics.",
+        "Production Designer": "Focus on visual constraints, modification possibilities, restoration.",
+        "Assistant Director (AD)": "Emphasize scheduling, crew call times, turnaround rules, safety.",
     }
-    role_instruction = role_focus.get(req.user_role, "Provide a balanced overview of all considerations.")
+    role_instruction = role_focus.get(req.user_role, "Provide a balanced overview.")
 
-    system_prompt = f"""You are CinesyncAI, the AI expert embedded in a film production group chat called Cinesync. You are a compliance auditor, location analyst, and production logistics expert for Los Angeles film productions.
+    system_prompt = f"""You are CinesyncAI, the AI compliance expert embedded in a film production group chat. You are an authority on LA film permits, TMZ rules, union agreements (DGA, IATSE), and location logistics.
 
-KNOWLEDGE BASE CONTEXT (retrieved via RAG):
+RETRIEVED KNOWLEDGE (from official FilmLA, DGA, IATSE, LAFD, LAPD documents):
 {context}
 
-YOUR ROLE: Act as the shared source of truth for the production team. Give structured, actionable answers.
+Answer using ONLY information grounded in the above knowledge. If the retrieved context does not cover the question, say so clearly rather than guessing.
 
-RESPONSE FORMAT — always use this structure when relevant:
-📍 **LOCATION ASSESSMENT** — TMZ status, jurisdiction
-⏱️ **PERMIT REQUIREMENTS** — Category, lead time, estimated cost  
-💰 **BUDGET IMPACT** — Cost estimates, union implications
-⚠️ **FLAGS & RISKS** — Any compliance issues, noise, logistics
-🎬 **CREATIVE NOTES** — Light, aesthetic, scene potential
-🚛 **LOGISTICS** — Parking, truck access, basecamp
+RESPONSE FORMAT — use only relevant sections:
+📍 LOCATION STATUS — TMZ zone, jurisdiction
+⏱️ PERMIT REQUIREMENTS — category, lead time, cost
+💰 BUDGET IMPACT — cost estimates, union implications  
+⚠️ FLAGS & RISKS — compliance issues, noise, logistics
+🎬 CREATIVE NOTES — light, aesthetic, scene potential
+🚛 LOGISTICS — parking, truck access, basecamp
 
-Only include sections relevant to the question. Be specific with numbers.
+Be specific with numbers and cite the source document when possible (e.g. "Per FilmLA City requirements..." or "Per DGA Section 13-116...").
 
 CURRENT USER ROLE: {req.user_role}
-{role_instruction}
+{role_instruction}"""
 
-If an image is provided, visually assess it: identify setting type (urban/residential/industrial/natural), estimate crew access, flag any visible compliance concerns."""
-
-    # 3. Build conversation history
     history = [{"role": m.role, "content": m.content} for m in (req.conversation_history or [])]
 
-    # 4. Call OpenAI — vision route if image attached, otherwise text
     try:
         if req.image_base64:
             reply = call_llm_with_image(
@@ -473,17 +403,17 @@ If an image is provided, visually assess it: identify setting type (urban/reside
                 user_message=req.message,
                 messages=history,
                 image_base64=req.image_base64,
-                mime_type=req.image_media_type or "image/jpeg"
+                mime_type=req.image_media_type or "image/jpeg",
             )
         elif history:
             reply = call_llm_with_history(
                 system_prompt=system_prompt,
-                messages=[*history, {"role": "user", "content": req.message}]
+                messages=[*history, {"role": "user", "content": req.message}],
             )
         else:
             reply = call_llm(
                 system_prompt=system_prompt,
-                user_message=req.message
+                user_message=req.message,
             )
 
         return ChatResponse(response=reply, rag_sources_used=len(context_docs))

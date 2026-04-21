@@ -1,0 +1,8 @@
+venv/
+.env
+__pycache__/
+*.zip
+*.json
+*.csv
+*.pdf
+node_modules/
