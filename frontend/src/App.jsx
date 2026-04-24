@@ -24,10 +24,20 @@ const SUGGESTED_PROMPTS = [
   "How much does truck parking affect logistics for Venice Beach?",
 ]
 
-// ─── Shared styles ────────────────────────────────────────────────────────────
 const card = { background: 'var(--bg-card)', border: '1px solid var(--border-card)', borderRadius: 8, padding: '12px 16px', marginBottom: 10 }
 const lbl  = { fontSize: 10, color: 'var(--text-label)', fontFamily: 'var(--font-mono)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 5, display: 'block' }
 const inputSt = { width: '100%', padding: '9px 12px', background: 'var(--bg-input)', border: '1px solid var(--border-bright)', borderRadius: 7, color: 'var(--text-primary)', fontSize: 13, fontFamily: 'var(--font-body)', outline: 'none', boxSizing: 'border-box' }
+
+// ─── Hook: detect mobile ──────────────────────────────────────────────────────
+function useIsMobile(breakpoint = 768) {
+  const [isMobile, setIsMobile] = useState(window.innerWidth < breakpoint)
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < breakpoint)
+    window.addEventListener('resize', handler)
+    return () => window.removeEventListener('resize', handler)
+  }, [breakpoint])
+  return isMobile
+}
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 function RoleBadge({ role, size = 'sm' }) {
@@ -50,32 +60,99 @@ function Avatar({ role, size = 36, name }) {
   )
 }
 
+// ─── Custom image renderer for AI map images ──────────────────────────────────
+const MapImage = ({ src, alt }) => {
+  const isEmbed = src?.includes('openstreetmap.org/export/embed')
+  return (
+    <div style={{ margin: '10px 0' }}>
+      {isEmbed ? (
+        <iframe
+          src={src}
+          style={{
+            width: '100%',
+            maxWidth: 480,
+            height: 220,
+            borderRadius: 10,
+            border: '1px solid var(--border)',
+            display: 'block',
+            boxShadow: '0 2px 8px rgba(15,23,42,0.08)',
+          }}
+          title={alt}
+          loading="lazy"
+        />
+      ) : (
+        <img
+          src={src}
+          alt={alt}
+          style={{
+            width: '100%',
+            maxWidth: 480,
+            borderRadius: 10,
+            border: '1px solid var(--border)',
+            display: 'block',
+            boxShadow: '0 2px 8px rgba(15,23,42,0.08)',
+          }}
+          onError={e => { e.target.style.display = 'none' }}
+        />
+      )}
+      {alt && (
+        <div style={{
+          fontSize: 10,
+          color: 'var(--text-muted)',
+          fontFamily: 'var(--font-mono)',
+          marginTop: 4,
+          letterSpacing: '0.05em',
+        }}>
+          📍 {alt}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function Message({ msg }) {
   const isAI = msg.sender === 'Cinesync'
   const participant = PARTICIPANTS.find(p => p.name === msg.sender)
   const role = participant?.role || msg.role || 'Location Manager'
   return (
-    <div style={{ display: 'flex', gap: 12, padding: '14px 22px', background: isAI ? 'rgba(13,148,136,0.04)' : 'transparent', borderLeft: isAI ? '3px solid var(--teal)' : '3px solid transparent', borderBottom: '1px solid var(--border)' }}>
-      <Avatar role={isAI ? 'ai' : role} size={36} name={isAI ? 'AI' : msg.sender} />
+    <div style={{ display: 'flex', gap: 10, padding: '12px 14px', background: isAI ? 'rgba(13,148,136,0.04)' : 'transparent', borderLeft: isAI ? '3px solid var(--teal)' : '3px solid transparent', borderBottom: '1px solid var(--border)' }}>
+      <Avatar role={isAI ? 'ai' : role} size={32} name={isAI ? 'AI' : msg.sender} />
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-          <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 15, color: isAI ? 'var(--teal)' : 'var(--text-primary)', letterSpacing: '0.02em' }}>{msg.sender}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4, flexWrap: 'wrap' }}>
+          <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 14, color: isAI ? 'var(--teal)' : 'var(--text-primary)', letterSpacing: '0.02em' }}>{msg.sender}</span>
           {isAI
-            ? <span style={{ fontSize: 9, padding: '2px 7px', background: 'var(--teal-glow)', color: 'var(--teal)', border: '1px solid rgba(13,148,136,0.25)', borderRadius: 4, fontFamily: 'var(--font-mono)', fontWeight: 600, letterSpacing: '0.08em' }}>AI · RAG</span>
+            ? <span style={{ fontSize: 9, padding: '2px 6px', background: 'var(--teal-glow)', color: 'var(--teal)', border: '1px solid rgba(13,148,136,0.25)', borderRadius: 4, fontFamily: 'var(--font-mono)', fontWeight: 600, letterSpacing: '0.08em' }}>AI · RAG</span>
             : <RoleBadge role={role} size="xs" />}
-          <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginLeft: 'auto' }}>{msg.time}</span>
+          <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginLeft: 'auto' }}>{msg.time}</span>
         </div>
         {msg.imageUrl && (
-          <div style={{ marginBottom: 10 }}>
-            <img src={msg.imageUrl} alt="Location" style={{ maxWidth: 320, maxHeight: 220, borderRadius: 8, border: '1px solid var(--border)', objectFit: 'cover' }} />
+          <div style={{ marginBottom: 8 }}>
+            <img src={msg.imageUrl} alt="Location" style={{ maxWidth: '100%', maxHeight: 200, borderRadius: 8, border: '1px solid var(--border)', objectFit: 'cover' }} />
             <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', marginTop: 4 }}>📎 location_photo.jpg</div>
           </div>
         )}
         {isAI
-          ? <div className="ai-content"><ReactMarkdown>{msg.content}</ReactMarkdown></div>
-          : <p style={{ fontSize: 14, color: 'var(--text-secondary)', lineHeight: 1.7 }}>{msg.content}</p>}
+          ? (
+            <div className="ai-content">
+              <ReactMarkdown
+                components={{
+                  img: ({ src, alt }) => <MapImage src={src} alt={alt} />,
+                  // Prevent ReactMarkdown from wrapping images in <p> tags
+                  p: ({ children }) => {
+                    const hasImage = Array.isArray(children)
+                      ? children.some(c => c?.type === MapImage)
+                      : children?.type === MapImage
+                    return hasImage ? <>{children}</> : <p>{children}</p>
+                  },
+                }}
+              >
+                {msg.content}
+             </ReactMarkdown>
+            </div>
+          )
+          : <p style={{ fontSize: 14, color: 'var(--text-secondary)', lineHeight: 1.65 }}>{msg.content}</p>}
         {isAI && msg.ragSources > 0 && (
-          <div style={{ marginTop: 10, display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+          <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
             <span style={{ color: 'var(--amber)', fontSize: 10 }}>◆</span>{msg.ragSources} knowledge sources retrieved
           </div>
         )}
@@ -86,9 +163,9 @@ function Message({ msg }) {
 
 function TypingIndicator() {
   return (
-    <div style={{ display: 'flex', gap: 12, padding: '14px 22px', background: 'rgba(13,148,136,0.04)', borderLeft: '3px solid var(--teal)', borderBottom: '1px solid var(--border)' }}>
-      <Avatar role="ai" size={36} name="AI" />
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingTop: 8 }}>
+    <div style={{ display: 'flex', gap: 10, padding: '12px 14px', background: 'rgba(13,148,136,0.04)', borderLeft: '3px solid var(--teal)', borderBottom: '1px solid var(--border)' }}>
+      <Avatar role="ai" size={32} name="AI" />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, paddingTop: 6 }}>
         {[0,1,2].map(i => <div key={i} style={{ width: 6, height: 6, borderRadius: '50%', background: 'var(--teal)', animation: 'pulse 1.2s ease-in-out infinite', animationDelay: `${i*0.2}s`, opacity: 0.6 }} />)}
         <span style={{ fontSize: 12, color: 'var(--text-muted)', marginLeft: 4, fontFamily: 'var(--font-mono)' }}>Cinesync analyzing...</span>
       </div>
@@ -97,12 +174,11 @@ function TypingIndicator() {
   )
 }
 
-// ─── Modal wrapper ────────────────────────────────────────────────────────────
 function Modal({ onClose, width = 480, children }) {
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(15,23,42,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px', backdropFilter: 'blur(2px)' }}
+    <div style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(15,23,42,0.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px', backdropFilter: 'blur(2px)' }}
       onClick={e => { if (e.target === e.currentTarget) onClose() }}>
-      <div style={{ width, maxWidth: '95vw', background: 'var(--bg-modal)', border: '1px solid var(--border)', borderRadius: 16, overflow: 'hidden', boxShadow: '0 20px 60px rgba(15,23,42,0.18), 0 4px 16px rgba(15,23,42,0.1)', maxHeight: '90vh', overflowY: 'auto' }}>
+      <div style={{ width: '100%', maxWidth: width, background: 'var(--bg-modal)', border: '1px solid var(--border)', borderRadius: 16, overflow: 'hidden', boxShadow: '0 20px 60px rgba(15,23,42,0.18)', maxHeight: '92vh', overflowY: 'auto' }}>
         {children}
       </div>
     </div>
@@ -111,12 +187,12 @@ function Modal({ onClose, width = 480, children }) {
 
 function ModalHeader({ icon, title, subtitle, accentColor, onClose }) {
   return (
-    <div style={{ padding: '18px 22px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'var(--bg-elevated)', position: 'sticky', top: 0, zIndex: 1 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <div style={{ width: 36, height: 36, borderRadius: 8, background: accentColor + '15', border: `1px solid ${accentColor}30`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>{icon}</div>
+    <div style={{ padding: '16px 18px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'var(--bg-elevated)', position: 'sticky', top: 0, zIndex: 1 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+        <div style={{ width: 34, height: 34, borderRadius: 8, background: accentColor + '15', border: `1px solid ${accentColor}30`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16 }}>{icon}</div>
         <div>
-          <div style={{ fontFamily: 'var(--font-display)', fontSize: 17, fontWeight: 700, color: accentColor, letterSpacing: '0.05em' }}>{title}</div>
-          {subtitle && <div style={{ fontSize: 11, color: 'var(--text-label)', fontFamily: 'var(--font-mono)', marginTop: 2 }}>{subtitle}</div>}
+          <div style={{ fontFamily: 'var(--font-display)', fontSize: 15, fontWeight: 700, color: accentColor, letterSpacing: '0.05em' }}>{title}</div>
+          {subtitle && <div style={{ fontSize: 10, color: 'var(--text-label)', fontFamily: 'var(--font-mono)', marginTop: 1 }}>{subtitle}</div>}
         </div>
       </div>
       <button onClick={onClose} style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text-label)', cursor: 'pointer', fontSize: 16, width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
@@ -124,11 +200,10 @@ function ModalHeader({ icon, title, subtitle, accentColor, onClose }) {
   )
 }
 
-function PrimaryBtn({ onClick, disabled, loading, children, color = 'var(--amber)' }) {
+function PrimaryBtn({ onClick, disabled, children, color = 'var(--amber)' }) {
   return (
-    <button onClick={onClick} disabled={disabled} style={{ padding: '9px 22px', background: disabled ? 'var(--bg-card)' : color, color: disabled ? 'var(--text-muted)' : '#fff', border: disabled ? '1px solid var(--border)' : 'none', borderRadius: 8, fontSize: 13, fontWeight: 700, fontFamily: 'var(--font-display)', letterSpacing: '0.06em', cursor: disabled ? 'default' : 'pointer', flexShrink: 0, whiteSpace: 'nowrap', transition: 'opacity 0.15s' }}
-      onMouseEnter={e => { if (!disabled) e.currentTarget.style.opacity = '0.88' }}
-      onMouseLeave={e => { e.currentTarget.style.opacity = '1' }}>
+    <button onClick={onClick} disabled={disabled}
+      style={{ padding: '9px 18px', background: disabled ? 'var(--bg-card)' : color, color: disabled ? 'var(--text-muted)' : '#fff', border: disabled ? '1px solid var(--border)' : 'none', borderRadius: 8, fontSize: 13, fontWeight: 700, fontFamily: 'var(--font-display)', letterSpacing: '0.06em', cursor: disabled ? 'default' : 'pointer', flexShrink: 0, whiteSpace: 'nowrap' }}>
       {children}
     </button>
   )
@@ -159,16 +234,15 @@ function TmzLookupPanel({ onClose }) {
 
   return (
     <Modal onClose={onClose}>
-      <ModalHeader icon="📍" title="TMZ ZONE LOOKUP" subtitle="Thirty Mile Zone — Beverly Blvd & La Cienega Blvd center" accentColor="var(--amber)" onClose={onClose} />
-
-      <div style={{ padding: '20px 22px', borderBottom: '1px solid var(--border)' }}>
-        <div style={{ marginBottom: 14 }}>
+      <ModalHeader icon="📍" title="TMZ ZONE LOOKUP" subtitle="Thirty Mile Zone — Beverly & La Cienega" accentColor="var(--amber)" onClose={onClose} />
+      <div style={{ padding: '16px 18px', borderBottom: '1px solid var(--border)' }}>
+        <div style={{ marginBottom: 12 }}>
           <label style={lbl}>Location Address</label>
           <input value={address} onChange={e => setAddress(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleLookup()} placeholder="e.g. Griffith Observatory, Los Angeles" style={inputSt} />
         </div>
         <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end' }}>
           <div style={{ flex: 1 }}>
-            <label style={lbl}>Crew Size (for budget estimate)</label>
+            <label style={lbl}>Crew Size</label>
             <input type="number" value={crewSize} onChange={e => setCrewSize(e.target.value)} min="1" style={inputSt} />
           </div>
           <PrimaryBtn onClick={handleLookup} disabled={loading || !address.trim()} color="var(--amber)">
@@ -176,41 +250,28 @@ function TmzLookupPanel({ onClose }) {
           </PrimaryBtn>
         </div>
       </div>
-
-      {error && <div style={{ padding: '14px 22px', background: '#FEF2F2', borderBottom: '1px solid #FECACA' }}><span style={{ fontSize: 13, color: '#DC2626', fontFamily: 'var(--font-mono)' }}>⚠ {error}</span></div>}
-
+      {error && <div style={{ padding: '12px 18px', background: '#FEF2F2' }}><span style={{ fontSize: 13, color: '#DC2626', fontFamily: 'var(--font-mono)' }}>⚠ {error}</span></div>}
       {result && (
-        <div style={{ padding: '20px 22px' }}>
-          {/* Status */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '16px 20px', borderRadius: 12, background: statusBg, border: `1.5px solid ${statusBorder}`, marginBottom: 16 }}>
-            <div style={{ width: 50, height: 50, borderRadius: 12, background: statusColor + '20', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, flexShrink: 0 }}>
-              {inside ? '✅' : '⚠️'}
-            </div>
+        <div style={{ padding: '16px 18px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px', borderRadius: 12, background: statusBg, border: `1.5px solid ${statusBorder}`, marginBottom: 14 }}>
+            <div style={{ width: 44, height: 44, borderRadius: 10, background: statusColor + '20', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, flexShrink: 0 }}>{inside ? '✅' : '⚠️'}</div>
             <div>
-              <div style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 700, color: statusColor, letterSpacing: '0.04em' }}>{result.status_label}</div>
-              <div style={{ fontSize: 12, color: statusColor, fontFamily: 'var(--font-mono)', marginTop: 3, opacity: 0.75 }}>
-                {result.distance_miles} mi from TMZ center · {result.miles_from_boundary} mi {inside ? 'inside' : 'outside'} boundary
-              </div>
+              <div style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 700, color: statusColor }}>{result.status_label}</div>
+              <div style={{ fontSize: 11, color: statusColor, fontFamily: 'var(--font-mono)', marginTop: 2, opacity: 0.75 }}>{result.distance_miles} mi from center · {result.miles_from_boundary} mi {inside ? 'inside' : 'outside'} boundary</div>
             </div>
           </div>
-
-          {/* Address card */}
           <div style={card}>
             <span style={lbl}>Resolved Address</span>
-            <div style={{ fontSize: 14, color: 'var(--text-primary)', lineHeight: 1.55, marginBottom: 6, fontWeight: 500 }}>{result.resolved_address}</div>
+            <div style={{ fontSize: 13, color: 'var(--text-primary)', lineHeight: 1.5, marginBottom: 4, fontWeight: 500 }}>{result.resolved_address}</div>
             <div style={{ fontSize: 11, color: 'var(--text-label)', fontFamily: 'var(--font-mono)' }}>{result.latitude}, {result.longitude}</div>
           </div>
-
-          {/* Budget */}
           <div style={{ ...card, background: '#FFFBEB', border: '1px solid #FDE68A' }}>
             <span style={{ ...lbl, color: 'var(--amber-dim)' }}>💰 Budget Impact</span>
-            <div style={{ fontSize: 13, color: '#78350F', lineHeight: 1.7 }}>{result.budget_impact}</div>
+            <div style={{ fontSize: 13, color: '#78350F', lineHeight: 1.65 }}>{result.budget_impact}</div>
           </div>
-
-          {/* Union */}
           <div style={{ ...card, background: '#F0FDFA', border: '1px solid #99F6E4', marginBottom: 0 }}>
             <span style={{ ...lbl, color: 'var(--teal-dim)' }}>⚖️ Union Implications</span>
-            <div style={{ fontSize: 13, color: '#134E4A', lineHeight: 1.7 }}>{result.union_implications}</div>
+            <div style={{ fontSize: 13, color: '#134E4A', lineHeight: 1.65 }}>{result.union_implications}</div>
           </div>
         </div>
       )}
@@ -236,8 +297,7 @@ function SunPathDiagram({ result }) {
 
   const timeToPoint = (str) => {
     const t = Math.max(0, Math.min(1, (toMins(str) - sunriseMins) / span))
-    const rad = (t * Math.PI)
-    return { x: cx - R * Math.cos(Math.PI - rad), y: cy - R * Math.sin(rad) }
+    return { x: cx - R * Math.cos(Math.PI - t * Math.PI), y: cy - R * Math.sin(t * Math.PI) }
   }
 
   const arcSeg = (t1, t2) => {
@@ -260,39 +320,20 @@ function SunPathDiagram({ result }) {
   return (
     <svg viewBox={`0 0 ${W} ${H}`} style={{ width: '100%', height: 'auto', display: 'block' }}>
       <defs>
-        {/* Daytime sky: deep blue at top fading to warm horizon */}
         <linearGradient id="skyGrad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%"   stopColor="#BFDBFE" />
-          <stop offset="70%"  stopColor="#E0F2FE" />
-          <stop offset="100%" stopColor="#FEF3C7" />
+          <stop offset="0%" stopColor="#BFDBFE" /><stop offset="70%" stopColor="#E0F2FE" /><stop offset="100%" stopColor="#FEF3C7" />
         </linearGradient>
-        {/* Ground: warm earth tone */}
         <linearGradient id="groundGrad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%"   stopColor="#D4B896" />
-          <stop offset="100%" stopColor="#C4A882" />
+          <stop offset="0%" stopColor="#D4B896" /><stop offset="100%" stopColor="#C4A882" />
         </linearGradient>
       </defs>
-
-      {/* Sky */}
       <rect x="0" y="0" width={W} height={cy} fill="url(#skyGrad)" />
-      {/* Ground strip */}
       <rect x="0" y={cy} width={W} height={H - cy} fill="url(#groundGrad)" />
-      {/* Horizon line */}
       <line x1={14} y1={cy} x2={W - 14} y2={cy} stroke="#C2956A" strokeWidth="1.5" opacity="0.7" />
-
-      {/* Full arc track */}
       <path d={`M ${timeToPoint(result.sunrise).x} ${timeToPoint(result.sunrise).y} A ${R} ${R} 0 0 1 ${timeToPoint(result.sunset).x} ${timeToPoint(result.sunset).y}`} fill="none" stroke="#93C5FD" strokeWidth="6" strokeLinecap="round" opacity="0.5" />
-
-      {/* Morning golden hour */}
       <path d={arcSeg(result.golden_hour_morning_start, result.golden_hour_morning_end)} fill="none" stroke="#D97706" strokeWidth="7" strokeLinecap="round" opacity="0.85" />
-
-      {/* Evening golden hour */}
       <path d={arcSeg(result.golden_hour_evening_start, result.golden_hour_evening_end)} fill="none" stroke="#D97706" strokeWidth="7" strokeLinecap="round" opacity="0.85" />
-
-      {/* Blue hour */}
       <path d={arcSeg(result.sunset, result.dusk)} fill="none" stroke="#0D9488" strokeWidth="5" strokeLinecap="round" opacity="0.75" />
-
-      {/* Time markers */}
       {markers.map(({ time, color }, i) => {
         const pt = timeToPoint(time), { dx, dy, anchor } = getOffset(pt)
         return (
@@ -302,8 +343,6 @@ function SunPathDiagram({ result }) {
           </g>
         )
       })}
-
-      {/* Sun at noon */}
       {(() => {
         const pt = timeToPoint(result.solar_noon)
         return (
@@ -315,12 +354,8 @@ function SunPathDiagram({ result }) {
           </g>
         )
       })()}
-
-      {/* Direction labels */}
-      <text x={22} y={cy - 9} fontSize="10" fill="#78716C" fontFamily="monospace" fontWeight="600">EAST</text>
-      <text x={W - 54} y={cy - 9} fontSize="10" fill="#78716C" fontFamily="monospace" fontWeight="600">WEST</text>
-
-      {/* Legend */}
+      <text x={22} y={cy + 16} fontSize="10" fill="#78716C" fontFamily="monospace" fontWeight="600">EAST</text>
+      <text x={W - 54} y={cy + 16} fontSize="10" fill="#78716C" fontFamily="monospace" fontWeight="600">WEST</text>
       <rect x={14} y={12} width={10} height={4} rx="2" fill="#D97706" />
       <text x={28} y={19} fontSize="9" fill="#6B7280" fontFamily="monospace">Golden Hour</text>
       <rect x={118} y={12} width={10} height={4} rx="2" fill="#0D9488" />
@@ -356,9 +391,8 @@ function SunPathPanel({ onClose }) {
   return (
     <Modal onClose={onClose} width={520}>
       <ModalHeader icon="☀️" title="SUN PATH ANALYZER" subtitle="Golden hour, blue hour & shooting windows" accentColor="#B45309" onClose={onClose} />
-
-      <div style={{ padding: '20px 22px', borderBottom: '1px solid var(--border)' }}>
-        <div style={{ marginBottom: 14 }}>
+      <div style={{ padding: '16px 18px', borderBottom: '1px solid var(--border)' }}>
+        <div style={{ marginBottom: 12 }}>
           <label style={lbl}>Location Address</label>
           <input value={address} onChange={e => setAddress(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleLookup()} placeholder="e.g. Griffith Observatory, Los Angeles" style={inputSt} />
         </div>
@@ -372,48 +406,39 @@ function SunPathPanel({ onClose }) {
           </PrimaryBtn>
         </div>
       </div>
-
-      {error && <div style={{ padding: '14px 22px', background: '#FEF2F2', borderBottom: '1px solid #FECACA' }}><span style={{ fontSize: 13, color: '#DC2626', fontFamily: 'var(--font-mono)' }}>⚠ {error}</span></div>}
-
+      {error && <div style={{ padding: '12px 18px', background: '#FEF2F2' }}><span style={{ fontSize: 13, color: '#DC2626', fontFamily: 'var(--font-mono)' }}>⚠ {error}</span></div>}
       {result && (
-        <div style={{ padding: '20px 22px' }}>
-          {/* Location bar */}
+        <div style={{ padding: '16px 18px' }}>
           <div style={{ ...card, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <div style={{ fontSize: 13, color: 'var(--text-primary)', fontWeight: 600 }}>{result.resolved_address.split(',').slice(0, 2).join(',')}</div>
-            <div style={{ fontSize: 12, color: 'var(--text-label)', fontFamily: 'var(--font-mono)', flexShrink: 0, marginLeft: 12 }}>{result.total_daylight_hours}h daylight</div>
+            <div style={{ fontSize: 12, color: 'var(--text-label)', fontFamily: 'var(--font-mono)', flexShrink: 0, marginLeft: 10 }}>{result.total_daylight_hours}h daylight</div>
           </div>
-
-          {/* Diagram */}
           <div style={{ borderRadius: 10, overflow: 'hidden', border: '1px solid var(--border)', marginBottom: 14 }}>
             <SunPathDiagram result={result} />
           </div>
-
-          {/* Key times */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 16 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 14 }}>
             {[
               { lbl: 'Sunrise', val: result.sunrise, bg: '#FFFBEB', border: '#FDE68A', color: '#B45309' },
               { lbl: 'Solar Noon', val: result.solar_noon, bg: '#FEFCE8', border: '#FEF08A', color: '#A16207' },
               { lbl: 'Sunset', val: result.sunset, bg: '#FFFBEB', border: '#FDE68A', color: '#B45309' },
             ].map(({ lbl: l, val, bg, border, color }) => (
-              <div key={l} style={{ background: bg, border: `1px solid ${border}`, borderRadius: 8, padding: '10px 12px', textAlign: 'center' }}>
-                <div style={{ fontSize: 10, color, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 4 }}>{l}</div>
-                <div style={{ fontSize: 15, fontWeight: 700, color, fontFamily: 'var(--font-display)' }}>{val}</div>
+              <div key={l} style={{ background: bg, border: `1px solid ${border}`, borderRadius: 8, padding: '8px 10px', textAlign: 'center' }}>
+                <div style={{ fontSize: 9, color, fontFamily: 'var(--font-mono)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: 3 }}>{l}</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color, fontFamily: 'var(--font-display)' }}>{val}</div>
               </div>
             ))}
           </div>
-
-          {/* Shooting windows */}
-          <div style={{ fontSize: 10, color: 'var(--text-label)', fontFamily: 'var(--font-mono)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 10 }}>Shooting Windows</div>
+          <div style={{ fontSize: 10, color: 'var(--text-label)', fontFamily: 'var(--font-mono)', letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 8 }}>Shooting Windows</div>
           {result.shooting_windows.map((w, i) => {
             const s = windowStyle[w.type] || windowStyle.neutral
             return (
-              <div key={i} style={{ background: s.bg, border: `1px solid ${s.border}`, borderRadius: 10, padding: '12px 16px', marginBottom: 10 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 5 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: s.label, fontFamily: 'var(--font-display)', letterSpacing: '0.04em' }}>{w.label}</div>
-                  <div style={{ fontSize: 11, color: s.label, fontFamily: 'var(--font-mono)', opacity: 0.8 }}>{w.start} – {w.end}</div>
+              <div key={i} style={{ background: s.bg, border: `1px solid ${s.border}`, borderRadius: 10, padding: '10px 14px', marginBottom: 8 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4, flexWrap: 'wrap', gap: 4 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: s.label, fontFamily: 'var(--font-display)', letterSpacing: '0.04em' }}>{w.label}</div>
+                  <div style={{ fontSize: 10, color: s.label, fontFamily: 'var(--font-mono)', opacity: 0.8 }}>{w.start} – {w.end}</div>
                 </div>
-                <div style={{ fontSize: 11, color: s.label, marginBottom: 4, fontFamily: 'var(--font-mono)', fontWeight: 600, opacity: 0.75 }}>{w.direction}</div>
-                <div style={{ fontSize: 13, color: s.text, lineHeight: 1.65 }}>{w.notes}</div>
+                <div style={{ fontSize: 10, color: s.label, marginBottom: 3, fontFamily: 'var(--font-mono)', fontWeight: 600, opacity: 0.75 }}>{w.direction}</div>
+                <div style={{ fontSize: 12, color: s.text, lineHeight: 1.6 }}>{w.notes}</div>
               </div>
             )
           })}
@@ -423,15 +448,96 @@ function SunPathPanel({ onClose }) {
   )
 }
 
+// ─── Sidebar content ──────────────────────────────────────────────────────────
+function SidebarContent({ backendStatus, setShowTmzLookup, setShowSunPath, onClose }) {
+  return (
+    <>
+      <div style={{ padding: '18px 16px 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div>
+          <div style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--amber)' }}>
+            CINESYNC<span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>AI</span>
+          </div>
+          <div style={{ fontSize: 10, color: 'var(--text-label)', fontFamily: 'var(--font-mono)', marginTop: 1 }}>Film Location Intelligence</div>
+        </div>
+        {onClose && (
+          <button onClick={onClose} style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text-label)', cursor: 'pointer', fontSize: 18, width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
+        )}
+      </div>
+
+      <div style={{ padding: '8px 16px', borderBottom: '1px solid var(--border)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11, fontFamily: 'var(--font-mono)' }}>
+          <div style={{ width: 7, height: 7, borderRadius: '50%', background: backendStatus === 'ok' ? '#10B981' : backendStatus === 'error' ? '#EF4444' : '#F59E0B', boxShadow: backendStatus === 'ok' ? '0 0 6px #10B981' : 'none' }} />
+          <span style={{ color: 'var(--text-label)' }}>{backendStatus === 'ok' ? 'RAG Engine Online' : backendStatus === 'error' ? 'Backend Offline' : 'Connecting...'}</span>
+        </div>
+      </div>
+
+      <div style={{ padding: '12px 16px 8px' }}>
+        <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', letterSpacing: '0.1em', marginBottom: 8 }}>CHANNEL</div>
+        <div style={{ padding: '7px 10px', borderRadius: 8, background: 'var(--amber-glow)', border: '1px solid rgba(217,119,6,0.2)', display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ color: 'var(--amber)', fontSize: 13 }}>🎬</span>
+          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>location-scout</span>
+        </div>
+      </div>
+
+      <div style={{ padding: '0 16px 12px', borderBottom: '1px solid var(--border)' }}>
+        <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', letterSpacing: '0.1em', marginBottom: 8 }}>TOOLS</div>
+        {[
+          { icon: '📍', label: 'TMZ LOOKUP', sub: 'Check any address', color: 'var(--amber)', hoverBg: 'var(--amber-glow)', hoverBorder: 'rgba(217,119,6,0.3)', action: () => { setShowTmzLookup(true); onClose?.() } },
+          { icon: '☀️', label: 'SUN PATH', sub: 'Golden hour & windows', color: '#B45309', hoverBg: '#FFFBEB', hoverBorder: '#FDE68A', action: () => { setShowSunPath(true); onClose?.() } },
+        ].map((tool, i) => (
+          <button key={i} onClick={tool.action} style={{ width: '100%', padding: '9px 10px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 9, cursor: 'pointer', textAlign: 'left', marginBottom: i === 0 ? 7 : 0, transition: 'all 0.15s' }}
+            onMouseEnter={e => { e.currentTarget.style.background = tool.hoverBg; e.currentTarget.style.borderColor = tool.hoverBorder }}
+            onMouseLeave={e => { e.currentTarget.style.background = 'var(--bg-elevated)'; e.currentTarget.style.borderColor = 'var(--border)' }}>
+            <span style={{ fontSize: 15 }}>{tool.icon}</span>
+            <div>
+              <div style={{ fontSize: 11, fontWeight: 700, color: tool.color, fontFamily: 'var(--font-display)', letterSpacing: '0.05em' }}>{tool.label}</div>
+              <div style={{ fontSize: 10, color: 'var(--text-label)', fontFamily: 'var(--font-mono)', marginTop: 1 }}>{tool.sub}</div>
+            </div>
+          </button>
+        ))}
+      </div>
+
+      <div style={{ padding: '12px 16px', flex: 1, overflowY: 'auto' }}>
+        <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', letterSpacing: '0.1em', marginBottom: 10 }}>PARTICIPANTS — {PARTICIPANTS.length}</div>
+        {PARTICIPANTS.map(p => {
+          const r = ROLES.find(x => x.id === p.role) || ROLES[0]
+          return (
+            <div key={p.name} style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 10 }}>
+              <div style={{ position: 'relative' }}>
+                <Avatar role={p.role} size={30} name={p.name} />
+                <div style={{ position: 'absolute', bottom: -1, right: -1, width: 7, height: 7, borderRadius: '50%', background: p.online ? '#10B981' : '#D1D5DB', border: '1.5px solid white' }} />
+              </div>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.2 }}>{p.name}</div>
+                <div style={{ fontSize: 10, color: r.color, fontWeight: 500 }}>{p.role.replace('Assistant Director (AD)', 'Asst. Director')}</div>
+              </div>
+            </div>
+          )
+        })}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginTop: 4, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+          <div style={{ position: 'relative' }}>
+            <Avatar role="ai" size={30} name="AI" />
+            <div style={{ position: 'absolute', bottom: -1, right: -1, width: 7, height: 7, borderRadius: '50%', background: '#10B981', border: '1.5px solid white' }} />
+          </div>
+          <div>
+            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--teal)', lineHeight: 1.2 }}>Cinesync</div>
+            <div style={{ fontSize: 10, color: 'var(--text-label)' }}>AI Expert</div>
+          </div>
+        </div>
+      </div>
+    </>
+  )
+}
+
 // ─── Initial messages ─────────────────────────────────────────────────────────
 const now = new Date()
 const fmt = (d) => d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
 
 const INITIAL_MESSAGES = [
   { id: 1, sender: 'Maya Chen', role: 'Location Manager', content: "Team — I found a great potential location in the Arts District. Uploading now for AI review.", time: fmt(new Date(now - 8*60000)) },
-  { id: 2, sender: 'Cinesync', role: 'ai', content: `📍 **LOCATION ASSESSMENT** — Arts District, Downtown LA\nStatus: **INSIDE TMZ** ✅ No travel pay triggered.\n\n⏱️ **PERMIT REQUIREMENTS**\nFor a 60-person crew on a public street: **Category 3 permit**. Lead time: 5–10 business days. Estimated base fee: ~$2,500 + location fee $1,200–3,500/day.\n\n💰 **BUDGET IMPACT**\nTMZ compliance confirmed — no hotel/per diem costs. LAPD film detail required for street work: ~$45/hr per officer.\n\n⚠️ **FLAGS & RISKS**\nIndustrial/residential mixed zone — noise ordinance hours apply: **7AM–10PM weekdays**. Truck access: verify alley clearance (14ft minimum) before committing.\n\n🎬 **CREATIVE NOTES**\nArts District brick facades excellent for gritty urban aesthetic. East-facing buildings get best light 7–11AM. West-facing buildings golden hour 4–7PM.\n\n🚛 **LOGISTICS**\nSeveral metered lots nearby. Recommend basecamp on Industrial St for 10–15 trucks. Book 2 weeks ahead.`, time: fmt(new Date(now - 7*60000)), ragSources: 4 },
+  { id: 2, sender: 'Cinesync', role: 'ai', content: `📍 **LOCATION ASSESSMENT** — Arts District, Downtown LA\nStatus: **INSIDE TMZ** ✅ No travel pay triggered.\n\n⏱️ **PERMIT REQUIREMENTS**\nFor a 60-person crew on a public street: **Category 3 permit**. Lead time: 5–10 business days. Estimated base fee: ~$2,500 + location fee $1,200–3,500/day.\n\n💰 **BUDGET IMPACT**\nTMZ compliance confirmed — no hotel/per diem costs. LAPD film detail required for street work: ~$45/hr per officer.\n\n⚠️ **FLAGS & RISKS**\nIndustrial/residential mixed zone — noise ordinance hours apply: **7AM–10PM weekdays**.\n\n🎬 **CREATIVE NOTES**\nArts District brick facades excellent for gritty urban aesthetic. East-facing buildings get best light 7–11AM.\n\n![Map — Arts District](https://www.openstreetmap.org/export/embed.html?bbox=-118.2431,34.0307,-118.2231,34.0507&layer=mapnik&marker=34.0407,-118.2331)`, time: fmt(new Date(now - 7*60000)), ragSources: 4 },
   { id: 3, sender: 'James Park', role: 'Director', content: "Good. What's the sunset timing for a west-facing exterior? We need at least 45 minutes of magic hour.", time: fmt(new Date(now - 5*60000)) },
-  { id: 4, sender: 'Cinesync', role: 'ai', content: `🎬 **NATURAL LIGHT — West-Facing Exterior**\n\nFor current season in LA:\n- **Golden hour begins:** ~5:45 PM\n- **Magic hour window:** approximately 5:45–7:00 PM (75 min total)\n- **Shadow intrusion risk:** Neighboring buildings typically create shadow creep after 6:30 PM in dense urban areas\n\n**Recommendation:** Schedule west-facing exteriors with camera rolling by 5:30 PM to capture the full 45+ minutes before shadow encroachment. Include a cloud/weather contingency day in the schedule.\n\n⚠️ Noise ordinance in residential-adjacent zones: you must wrap by **10:00 PM** on weekdays.`, time: fmt(new Date(now - 4*60000)), ragSources: 2 },
+  { id: 4, sender: 'Cinesync', role: 'ai', content: `🎬 **NATURAL LIGHT — West-Facing Exterior**\n\n- **Golden hour begins:** ~5:45 PM\n- **Magic hour window:** approximately 5:45–7:00 PM (75 min total)\n- **Shadow intrusion risk:** Neighboring buildings create shadow creep after 6:30 PM\n\n**Recommendation:** Schedule west-facing exteriors with camera rolling by 5:30 PM.\n\n⚠️ Noise ordinance: wrap by **10:00 PM** on weekdays.`, time: fmt(new Date(now - 4*60000)), ragSources: 2 },
   { id: 5, sender: 'Sofia R.', role: 'Producer', content: "Great. Can we fit 3 semi trucks on the street or do we need a separate basecamp location?", time: fmt(new Date(now - 2*60000)) },
 ]
 
@@ -446,7 +552,9 @@ export default function App() {
   const [history, setHistory] = useState([])
   const [showTmzLookup, setShowTmzLookup] = useState(false)
   const [showSunPath, setShowSunPath] = useState(false)
+  const [sidebarOpen, setSidebarOpen] = useState(false)
 
+  const isMobile = useIsMobile()
   const fileInputRef = useRef(null)
   const chatEndRef = useRef(null)
   const inputRef = useRef(null)
@@ -456,6 +564,7 @@ export default function App() {
   }, [])
 
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, isLoading])
+  useEffect(() => { if (!isMobile) setSidebarOpen(false) }, [isMobile])
 
   const handleImageUpload = useCallback((file) => {
     if (!file || !file.type.startsWith('image/')) return
@@ -493,106 +602,51 @@ export default function App() {
       {showTmzLookup && <TmzLookupPanel onClose={() => setShowTmzLookup(false)} />}
       {showSunPath && <SunPathPanel onClose={() => setShowSunPath(false)} />}
 
-      {/* ── Sidebar ── */}
-      <div style={{ width: 248, flexShrink: 0, background: 'var(--bg-surface)', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', boxShadow: '2px 0 8px rgba(15,23,42,0.05)' }}>
-
-        {/* Logo */}
-        <div style={{ padding: '20px 18px 16px', borderBottom: '1px solid var(--border)' }}>
-          <div style={{ fontFamily: 'var(--font-display)', fontSize: 26, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--amber)' }}>
-            CINESYNC<span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>AI</span>
-          </div>
-          <div style={{ fontSize: 11, color: 'var(--text-label)', fontFamily: 'var(--font-mono)', marginTop: 2 }}>Film Location Intelligence</div>
-        </div>
-
-        {/* Status */}
-        <div style={{ padding: '10px 18px', borderBottom: '1px solid var(--border)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 11, fontFamily: 'var(--font-mono)' }}>
-            <div style={{ width: 7, height: 7, borderRadius: '50%', background: backendStatus === 'ok' ? '#10B981' : backendStatus === 'error' ? '#EF4444' : '#F59E0B', boxShadow: backendStatus === 'ok' ? '0 0 6px #10B981' : 'none' }} />
-            <span style={{ color: 'var(--text-label)' }}>{backendStatus === 'ok' ? 'RAG Engine Online' : backendStatus === 'error' ? 'Backend Offline' : 'Connecting...'}</span>
+      {/* ── Mobile drawer overlay ── */}
+      {isMobile && sidebarOpen && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 50, display: 'flex' }}>
+          <div style={{ position: 'absolute', inset: 0, background: 'rgba(15,23,42,0.4)', backdropFilter: 'blur(2px)' }} onClick={() => setSidebarOpen(false)} />
+          <div style={{ position: 'relative', width: 260, background: 'var(--bg-surface)', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', height: '100%', zIndex: 1, boxShadow: '4px 0 20px rgba(15,23,42,0.15)' }}>
+            <SidebarContent backendStatus={backendStatus} setShowTmzLookup={setShowTmzLookup} setShowSunPath={setShowSunPath} onClose={() => setSidebarOpen(false)} />
           </div>
         </div>
+      )}
 
-        {/* Channel */}
-        <div style={{ padding: '14px 18px 10px' }}>
-          <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', letterSpacing: '0.1em', marginBottom: 8 }}>CHANNEL</div>
-          <div style={{ padding: '8px 12px', borderRadius: 8, background: 'var(--amber-glow)', border: '1px solid rgba(217,119,6,0.2)', display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ color: 'var(--amber)', fontSize: 14 }}>🎬</span>
-            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>location-scout</span>
-          </div>
+      {/* ── Desktop sidebar ── */}
+      {!isMobile && (
+        <div style={{ width: 248, flexShrink: 0, background: 'var(--bg-surface)', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', boxShadow: '2px 0 8px rgba(15,23,42,0.05)' }}>
+          <SidebarContent backendStatus={backendStatus} setShowTmzLookup={setShowTmzLookup} setShowSunPath={setShowSunPath} />
         </div>
-
-        {/* Tools */}
-        <div style={{ padding: '0 18px 14px', borderBottom: '1px solid var(--border)' }}>
-          <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', letterSpacing: '0.1em', marginBottom: 8 }}>TOOLS</div>
-          {[
-            { icon: '📍', label: 'TMZ LOOKUP', sub: 'Check any address', color: 'var(--amber)', hoverBg: 'var(--amber-glow)', hoverBorder: 'rgba(217,119,6,0.3)', action: () => setShowTmzLookup(true) },
-            { icon: '☀️', label: 'SUN PATH', sub: 'Golden hour & windows', color: '#B45309', hoverBg: '#FFFBEB', hoverBorder: '#FDE68A', action: () => setShowSunPath(true) },
-          ].map((tool, i) => (
-            <button key={i} onClick={tool.action} style={{ width: '100%', padding: '10px 12px', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 8, display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', textAlign: 'left', marginBottom: i === 0 ? 8 : 0, transition: 'all 0.15s' }}
-              onMouseEnter={e => { e.currentTarget.style.background = tool.hoverBg; e.currentTarget.style.borderColor = tool.hoverBorder }}
-              onMouseLeave={e => { e.currentTarget.style.background = 'var(--bg-elevated)'; e.currentTarget.style.borderColor = 'var(--border)' }}>
-              <span style={{ fontSize: 16 }}>{tool.icon}</span>
-              <div>
-                <div style={{ fontSize: 12, fontWeight: 700, color: tool.color, fontFamily: 'var(--font-display)', letterSpacing: '0.05em' }}>{tool.label}</div>
-                <div style={{ fontSize: 10, color: 'var(--text-label)', fontFamily: 'var(--font-mono)', marginTop: 1 }}>{tool.sub}</div>
-              </div>
-            </button>
-          ))}
-        </div>
-
-        {/* Participants */}
-        <div style={{ padding: '14px 18px', flex: 1, overflow: 'auto' }}>
-          <div style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', letterSpacing: '0.1em', marginBottom: 12 }}>PARTICIPANTS — {PARTICIPANTS.length}</div>
-          {PARTICIPANTS.map(p => {
-            const r = ROLES.find(x => x.id === p.role) || ROLES[0]
-            return (
-              <div key={p.name} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
-                <div style={{ position: 'relative' }}>
-                  <Avatar role={p.role} size={32} name={p.name} />
-                  <div style={{ position: 'absolute', bottom: -1, right: -1, width: 8, height: 8, borderRadius: '50%', background: p.online ? '#10B981' : '#D1D5DB', border: '1.5px solid white' }} />
-                </div>
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', lineHeight: 1.2 }}>{p.name}</div>
-                  <div style={{ fontSize: 11, color: r.color, fontWeight: 500 }}>{p.role.replace('Assistant Director (AD)', 'Asst. Director')}</div>
-                </div>
-              </div>
-            )
-          })}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 4, paddingTop: 12, borderTop: '1px solid var(--border)' }}>
-            <div style={{ position: 'relative' }}>
-              <Avatar role="ai" size={32} name="AI" />
-              <div style={{ position: 'absolute', bottom: -1, right: -1, width: 8, height: 8, borderRadius: '50%', background: '#10B981', border: '1.5px solid white' }} />
-            </div>
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--teal)', lineHeight: 1.2 }}>Cinesync</div>
-              <div style={{ fontSize: 11, color: 'var(--text-label)' }}>AI Expert</div>
-            </div>
-          </div>
-        </div>
-      </div>
+      )}
 
       {/* ── Main chat ── */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
 
         {/* Header */}
-        <div style={{ padding: '14px 24px', borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', boxShadow: '0 1px 4px rgba(15,23,42,0.05)' }}>
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}># location-scout</span>
-              <span style={{ fontSize: 10, padding: '2px 8px', background: 'var(--amber-glow)', color: 'var(--amber)', border: '1px solid rgba(217,119,6,0.25)', borderRadius: 4, fontFamily: 'var(--font-mono)', fontWeight: 600 }}>LIVE</span>
+        <div style={{ padding: isMobile ? '10px 14px' : '14px 24px', borderBottom: '1px solid var(--border)', background: 'var(--bg-surface)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, boxShadow: '0 1px 4px rgba(15,23,42,0.05)', flexShrink: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+            {isMobile && (
+              <button onClick={() => setSidebarOpen(true)} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: '4px 6px', flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {[0,1,2].map(i => <div key={i} style={{ width: 20, height: 2, background: 'var(--amber)', borderRadius: 2 }} />)}
+              </button>
+            )}
+            <div style={{ minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                {!isMobile && <span style={{ fontFamily: 'var(--font-display)', fontSize: 20, fontWeight: 700, color: 'var(--amber)', letterSpacing: '0.05em' }}>CINESYNC<span style={{ color: 'var(--text-muted)', fontWeight: 400 }}>AI</span></span>}
+                <span style={{ fontSize: isMobile ? 13 : 14, fontWeight: 600, color: 'var(--text-primary)' }}># location-scout</span>
+                <span style={{ fontSize: 9, padding: '2px 6px', background: 'var(--amber-glow)', color: 'var(--amber)', border: '1px solid rgba(217,119,6,0.25)', borderRadius: 4, fontFamily: 'var(--font-mono)', fontWeight: 600, flexShrink: 0 }}>LIVE</span>
+              </div>
+              {!isMobile && <div style={{ fontSize: 11, color: 'var(--text-label)', marginTop: 2 }}>Real-time AI-assisted location compliance &amp; scouting</div>}
             </div>
-            <div style={{ fontSize: 12, color: 'var(--text-label)', marginTop: 2 }}>Real-time AI-assisted location compliance &amp; scouting</div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ fontSize: 12, color: 'var(--text-label)' }}>Speaking as:</span>
-            <select value={selectedRole} onChange={e => setSelectedRole(e.target.value)} style={{ background: 'var(--bg-input)', border: `1.5px solid ${currentRole?.color || 'var(--border)'}50`, color: currentRole?.color || 'var(--text-primary)', padding: '5px 10px', borderRadius: 7, fontSize: 13, fontFamily: 'var(--font-display)', fontWeight: 700, cursor: 'pointer', outline: 'none', letterSpacing: '0.04em' }}>
-              {ROLES.map(r => <option key={r.id} value={r.id}>{r.label}</option>)}
-            </select>
-          </div>
+          <select value={selectedRole} onChange={e => setSelectedRole(e.target.value)}
+            style={{ background: 'var(--bg-input)', border: `1.5px solid ${currentRole?.color || 'var(--border)'}50`, color: currentRole?.color || 'var(--text-primary)', padding: isMobile ? '5px 6px' : '5px 10px', borderRadius: 7, fontSize: isMobile ? 11 : 13, fontFamily: 'var(--font-display)', fontWeight: 700, cursor: 'pointer', outline: 'none', letterSpacing: '0.03em', flexShrink: 0, maxWidth: isMobile ? 110 : 'none' }}>
+            {ROLES.map(r => <option key={r.id} value={r.id}>{isMobile ? r.abbr : r.label}</option>)}
+          </select>
         </div>
 
         {/* Messages */}
-        <div style={{ flex: 1, overflow: 'auto', background: 'var(--bg-base)' }}>
+        <div style={{ flex: 1, overflowY: 'auto', background: 'var(--bg-base)' }}>
           {messages.map(msg => <Message key={msg.id} msg={msg} />)}
           {isLoading && <TypingIndicator />}
           <div ref={chatEndRef} />
@@ -600,9 +654,10 @@ export default function App() {
 
         {/* Suggested prompts */}
         {messages.length <= 5 && (
-          <div style={{ padding: '8px 22px', background: 'var(--bg-surface)', borderTop: '1px solid var(--border)', display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <div style={{ padding: '6px 12px', background: 'var(--bg-surface)', borderTop: '1px solid var(--border)', display: 'flex', gap: 6, flexWrap: 'wrap', flexShrink: 0 }}>
             {SUGGESTED_PROMPTS.map(p => (
-              <button key={p} onClick={() => { setInput(p); inputRef.current?.focus() }} style={{ padding: '5px 12px', borderRadius: 20, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-secondary)', fontSize: 12, cursor: 'pointer', transition: 'all 0.15s', fontFamily: 'var(--font-body)' }}
+              <button key={p} onClick={() => { setInput(p); inputRef.current?.focus() }}
+                style={{ padding: '4px 10px', borderRadius: 20, background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-secondary)', fontSize: 11, cursor: 'pointer', fontFamily: 'var(--font-body)' }}
                 onMouseEnter={e => { e.target.style.borderColor = 'var(--amber)'; e.target.style.color = 'var(--amber)'; e.target.style.background = 'var(--amber-glow)' }}
                 onMouseLeave={e => { e.target.style.borderColor = 'var(--border)'; e.target.style.color = 'var(--text-secondary)'; e.target.style.background = 'var(--bg-card)' }}>
                 {p}
@@ -612,29 +667,34 @@ export default function App() {
         )}
 
         {/* Input */}
-        <div style={{ padding: '12px 22px 16px', background: 'var(--bg-surface)', borderTop: '1px solid var(--border)' }}>
+        <div style={{ padding: isMobile ? '8px 12px 14px' : '12px 22px 16px', background: 'var(--bg-surface)', borderTop: '1px solid var(--border)', flexShrink: 0 }}>
           {pendingImage && (
-            <div style={{ marginBottom: 10, display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', borderRadius: 8, background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
-              <img src={pendingImage.url} alt="preview" style={{ width: 48, height: 36, objectFit: 'cover', borderRadius: 6, border: '1px solid var(--border)' }} />
-              <span style={{ fontSize: 12, color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)' }}>Location photo ready for AI analysis</span>
-              <button onClick={() => setPendingImage(null)} style={{ marginLeft: 'auto', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 5, color: 'var(--text-label)', cursor: 'pointer', fontSize: 14, width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
+            <div style={{ marginBottom: 8, display: 'flex', alignItems: 'center', gap: 8, padding: '6px 10px', borderRadius: 8, background: 'var(--bg-card)', border: '1px solid var(--border)' }}>
+              <img src={pendingImage.url} alt="preview" style={{ width: 40, height: 30, objectFit: 'cover', borderRadius: 5, border: '1px solid var(--border)' }} />
+              <span style={{ fontSize: 11, color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)' }}>Photo ready for analysis</span>
+              <button onClick={() => setPendingImage(null)} style={{ marginLeft: 'auto', background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 5, color: 'var(--text-label)', cursor: 'pointer', fontSize: 14, width: 22, height: 22, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>×</button>
             </div>
           )}
-          <div onDrop={handleDrop} onDragOver={e => e.preventDefault()} style={{ display: 'flex', gap: 10, alignItems: 'flex-end', padding: '10px 14px', background: 'var(--bg-input)', border: '1.5px solid var(--border-bright)', borderRadius: 12, transition: 'border-color 0.2s', boxShadow: '0 1px 3px rgba(15,23,42,0.06)' }}>
-            <button onClick={() => fileInputRef.current?.click()} title="Upload location photo" style={{ background: 'none', border: 'none', color: 'var(--text-label)', cursor: 'pointer', fontSize: 18, padding: '2px 4px', flexShrink: 0, transition: 'color 0.15s' }}
+          <div onDrop={handleDrop} onDragOver={e => e.preventDefault()}
+            style={{ display: 'flex', gap: 8, alignItems: 'flex-end', padding: '8px 12px', background: 'var(--bg-input)', border: '1.5px solid var(--border-bright)', borderRadius: 12, boxShadow: '0 1px 3px rgba(15,23,42,0.06)' }}>
+            <button onClick={() => fileInputRef.current?.click()} title="Upload photo"
+              style={{ background: 'none', border: 'none', color: 'var(--text-label)', cursor: 'pointer', fontSize: 17, padding: '2px 3px', flexShrink: 0 }}
               onMouseEnter={e => e.target.style.color = 'var(--amber)'}
               onMouseLeave={e => e.target.style.color = 'var(--text-label)'}>📎</button>
             <input ref={fileInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={e => handleImageUpload(e.target.files[0])} />
             <textarea ref={inputRef} value={input} onChange={e => setInput(e.target.value)} onKeyDown={handleKeyDown}
-              placeholder={`Message as ${ROLES.find(r => r.id === selectedRole)?.label}... (drop image or 📎 to upload)`}
-              rows={1} style={{ flex: 1, background: 'none', border: 'none', outline: 'none', color: 'var(--text-primary)', fontSize: 14, fontFamily: 'var(--font-body)', resize: 'none', lineHeight: 1.55, maxHeight: 120, overflow: 'auto' }} />
-            <button onClick={sendMessage} disabled={isLoading || (!input.trim() && !pendingImage)} style={{ background: isLoading || (!input.trim() && !pendingImage) ? 'var(--bg-card)' : 'var(--amber)', color: isLoading || (!input.trim() && !pendingImage) ? 'var(--text-muted)' : '#fff', border: isLoading || (!input.trim() && !pendingImage) ? '1px solid var(--border)' : 'none', borderRadius: 8, padding: '8px 18px', fontSize: 13, fontWeight: 700, fontFamily: 'var(--font-display)', letterSpacing: '0.06em', cursor: isLoading || (!input.trim() && !pendingImage) ? 'default' : 'pointer', flexShrink: 0, transition: 'all 0.15s' }}>
+              placeholder={`Message as ${ROLES.find(r => r.id === selectedRole)?.abbr}...`}
+              rows={1} style={{ flex: 1, background: 'none', border: 'none', outline: 'none', color: 'var(--text-primary)', fontSize: 14, fontFamily: 'var(--font-body)', resize: 'none', lineHeight: 1.5, maxHeight: 100, overflow: 'auto' }} />
+            <button onClick={sendMessage} disabled={isLoading || (!input.trim() && !pendingImage)}
+              style={{ background: isLoading || (!input.trim() && !pendingImage) ? 'var(--bg-card)' : 'var(--amber)', color: isLoading || (!input.trim() && !pendingImage) ? 'var(--text-muted)' : '#fff', border: isLoading || (!input.trim() && !pendingImage) ? '1px solid var(--border)' : 'none', borderRadius: 8, padding: '7px 14px', fontSize: 12, fontWeight: 700, fontFamily: 'var(--font-display)', letterSpacing: '0.06em', cursor: isLoading || (!input.trim() && !pendingImage) ? 'default' : 'pointer', flexShrink: 0 }}>
               {isLoading ? '...' : 'SEND'}
             </button>
           </div>
-          <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 7, textAlign: 'center', fontFamily: 'var(--font-mono)' }}>
-            Enter to send · Shift+Enter for new line · Drop images directly into chat
-          </div>
+          {!isMobile && (
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6, textAlign: 'center', fontFamily: 'var(--font-mono)' }}>
+              Enter to send · Shift+Enter for new line · Drop images directly into chat
+            </div>
+          )}
         </div>
       </div>
     </div>

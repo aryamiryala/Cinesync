@@ -9,6 +9,7 @@ import math
 import urllib.request
 import urllib.parse
 import json
+import re
 from datetime import date, timedelta
 from astral import LocationInfo
 from astral.sun import sun
@@ -24,8 +25,6 @@ app.add_middleware(
 )
 
 # ─── ChromaDB Setup ───────────────────────────────────────────────────────────
-# PersistentClient loads the PDF-ingested knowledge base from disk.
-# Run ingest_docs.py once before starting the server to populate chroma_db/.
 chroma_client = chromadb.PersistentClient(path="./chroma_db")
 
 embedding_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
@@ -65,7 +64,6 @@ KNOWN_INSIDE_TMZ = {
     'alhambra', 'san gabriel', 'temple city', 'rosemead', 'baldwin park',
     'beverly hills', 'bel air', 'brentwood', 'pacific palisades',
     'koreatown', 'downtown', 'arts district', 'boyle heights',
-    # DGA 13-214(h) secondary zone areas treated as inside TMZ
     'agua dulce', 'castaic', 'leo carrillo', 'piru',
 }
 
@@ -101,8 +99,44 @@ def geocode_address(address: str):
     return None, None, None
 
 
+# ─── Static Map ───────────────────────────────────────────────────────────────
+def get_static_map_url(lat: float, lon: float) -> str:
+    """OpenStreetMap embed URL — free, no API key, highly reliable."""
+    margin = 0.012
+    bbox = f"{lon-margin},{lat-margin},{lon+margin},{lat+margin}"
+    return (
+        f"https://www.openstreetmap.org/export/embed.html"
+        f"?bbox={bbox}&layer=mapnik&marker={lat},{lon}"
+    )
+
+
+def extract_location_from_message(message: str) -> Optional[str]:
+    """
+    Detect a specific named location in the user's message.
+    Returns the location string if found, None otherwise.
+    """
+    # Stop words that indicate the location name has ended
+    stop = r'(?:\s+(?:this|next|for|on|with|what|we|our|to|from|about|during|weekend|week|monday|tuesday|wednesday|thursday|friday|saturday|sunday)|[,?!]|$)'
+
+    patterns = [
+        # "filming at Griffith Observatory", "shoot at Venice Beach"
+        rf'(?:filming?\s+(?:at|in)|shoot(?:ing)?\s+(?:at|in)|scout(?:ing)?\s+(?:at|in))\s+([A-Z][A-Za-z0-9\s\'\-]{{2,40}}?){stop}',
+        # "at Griffith Observatory"
+        rf'(?:^|\s)(?:at|in)\s+([A-Z][A-Za-z0-9\s\'\-]{{2,40}}?(?:Observatory|Park|Beach|Boulevard|District|Studios?|Airport|Museum|Hills?|Canyon|Harbor|Pier|Plaza|Stadium|Center|Centre)){stop}',
+        # Any title-case location with a known LA landmark suffix
+        rf'([A-Z][A-Za-z0-9\s\'\-]{{2,40}}?(?:Observatory|Park|Beach|District|Studios?|Airport|Museum|Hills?|Harbor|Pier|Plaza|Stadium)){stop}',
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, message)
+        if match:
+            location = match.group(1).strip()
+            if len(location) > 4:
+                return location
+    return None
+
+
 # ─── RAG Query ────────────────────────────────────────────────────────────────
-# Role → doc_types most relevant, used for metadata pre-filtering
 ROLE_DOC_FILTERS = {
     "Producer":               ["permit_requirements", "fee_schedule", "union_rules"],
     "Location Manager":       ["permit_requirements", "fee_schedule", "department_requirements", "tmz_zone"],
@@ -113,13 +147,7 @@ ROLE_DOC_FILTERS = {
 
 
 def query_knowledge_base(query: str, user_role: str = "Location Manager", n_results: int = 6) -> List[str]:
-    """
-    Semantic search over ingested PDFs with optional role-based metadata filter.
-    Falls back to unfiltered search if the filtered query returns too few results.
-    """
     doc_types = ROLE_DOC_FILTERS.get(user_role)
-
-    # Try filtered search first
     if doc_types:
         try:
             results = collection.query(
@@ -133,8 +161,6 @@ def query_knowledge_base(query: str, user_role: str = "Location Manager", n_resu
                 return docs
         except Exception:
             pass
-
-    # Fallback: unfiltered search across all docs
     results = collection.query(
         query_texts=[query],
         n_results=n_results,
@@ -221,7 +247,6 @@ def health_check():
     return {
         "status": "ok",
         "knowledge_chunks": collection.count(),
-        "llm_backend": "llama.cpp @ localhost:8001",
     }
 
 
@@ -415,6 +440,19 @@ CURRENT USER ROLE: {req.user_role}
                 system_prompt=system_prompt,
                 user_message=req.message,
             )
+
+        # ── Append a static map image if we can detect a named location ──────
+        location_name = extract_location_from_message(req.message)
+        if location_name:
+            try:
+                search_query = f"{location_name}, Los Angeles, CA"
+                lat, lon, resolved = geocode_address(search_query)
+                if lat and lon:
+                    map_url = get_static_map_url(lat, lon)
+                    short_name = resolved.split(',')[0].strip()
+                    reply += f"\n\n![Map — {short_name}]({map_url})"
+            except Exception:
+                pass  # Silently skip — map is bonus content, never break chat
 
         return ChatResponse(response=reply, rag_sources_used=len(context_docs))
 
